@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 h-core = { path = "../core" }
+h-api = { path = "../api" }
 h-query = { path = "../query" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -17,6 +18,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "rt-multi-thread"] }

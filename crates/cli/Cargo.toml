@@ -33,6 +33,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
