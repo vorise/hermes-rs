@@ -20,6 +20,9 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

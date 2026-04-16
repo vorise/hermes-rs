@@ -23,6 +23,7 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 rusqlite = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -6,8 +6,10 @@
 pub mod config;
 pub mod home;
 pub mod logging;
+pub mod memory;
 pub mod session;
 pub mod session_db;
+pub mod skills;
 pub mod toolset;
 
 use serde::{Deserialize, Serialize};
@@ -516,7 +518,9 @@ pub struct CompletionTokensDetails {
 // ============================================================================
 
 pub use config::HermesConfig;
-pub use home::hermes_home;
+pub use home::{hermes_home, memory_dir, skills_dir, plugins_dir, logs_dir, sessions_db_path, config_path, ensure_hermes_home, ensure_all_dirs};
+pub use memory::{MemoryManager, MemoryEntry, MemoryIndex, NudgeConfig};
 pub use session::{Session, SessionSummary};
+pub use skills::{Skill, SkillRegistry, SkillNudgeConfig, SkillsGuard};
 pub use toolset::Toolset;
 pub use session_db::{SessionDB, SearchResult};
