@@ -1,0 +1,13 @@
+[package]
+name = "h-envs"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal backends (Docker, SSH, Modal, ...)"
+
+[dependencies]
+h-core = { path = "../core" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }

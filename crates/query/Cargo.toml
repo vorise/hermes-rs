@@ -1,0 +1,18 @@
+[package]
+name = "h-query"
+version = "0.1.0"
+edition = "2021"
+description = "Agentic query loop, context compression"
+
+[dependencies]
+h-core = { path = "../core" }
+h-api = { path = "../api" }
+h-tools = { path = "../tools" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+parking_lot = { workspace = true }

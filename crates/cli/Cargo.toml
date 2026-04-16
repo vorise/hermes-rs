@@ -1,0 +1,44 @@
+[package]
+name = "hermes-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Hermes Agent - CLI binary entry point"
+
+[[bin]]
+name = "hermes"
+path = "src/main.rs"
+
+[[bin]]
+name = "hermes-gateway"
+path = "src/gateway_main.rs"
+
+[[bin]]
+name = "hermes-acp"
+path = "src/acp_main.rs"
+
+[dependencies]
+h-core = { path = "../core" }
+h-api = { path = "../api" }
+h-tools = { path = "../tools" }
+h-query = { path = "../query" }
+h-tui = { path = "../tui" }
+h-commands = { path = "../commands" }
+h-mcp = { path = "../mcp" }
+h-gateway = { path = "../gateway" }
+h-acp = { path = "../acp" }
+h-envs = { path = "../envs" }
+h-web = { path = "../web" }
+h-plugins = { path = "../plugins" }
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+clap_complete = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+futures = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+serde_json = { workspace = true }

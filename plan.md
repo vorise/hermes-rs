@@ -546,27 +546,28 @@ impl ProcessRegistry {
 
 #### Checklist
 
-- [ ] Define `Tool` trait and `ToolContext` struct
-- [ ] Implement `ToolRegistry` with `inventory`-based auto-registration
-- [ ] Implement terminal tool with multi-backend support (defer env backends to Phase 8)
-- [ ] Implement file tools (read_file, write_file, patch, search_files)
-- [ ] Implement web tools (web_search via Exa/Parallel, web_extract via Firecrawl)
-- [ ] Implement delegate tool (subagent spawning)
-- [ ] Implement memory tool
-- [ ] Implement session search tool
-- [ ] Implement TTS tool (Edge TTS + ElevenLabs)
-- [ ] Implement vision tool
-- [ ] Implement Home Assistant tool
-- [ ] Implement todo tool
-- [ ] Implement image generation tool (DALL-E + FAL)
-- [ ] Implement cron job tools
-- [ ] Implement transcription tool
-- [ ] Implement approval system (is_destructive_command)
-- [ ] Implement process registry
-- [ ] Implement tool result size limiting and persistence
-- [ ] Implement parallel tool execution with `_MAX_TOOL_WORKERS = 8`
-- [ ] Implement parallel safety classification (never_parallel, parallel_safe, path_scoped)
-- [ ] Unit tests: tool registration, approval detection, process lifecycle
+- [x] Define `Tool` trait and `ToolContext` struct
+- [x] Implement `ToolRegistry` with `inventory`-based auto-registration
+- [x] Implement terminal tool with multi-backend support (defer env backends to Phase 8)
+- [x] Implement file tools (read_file, write_file, patch, search_files)
+- [x] Implement web tools (web_search via Exa/Parallel, web_extract via Firecrawl)
+- [x] Implement delegate tool (subagent spawning)
+- [x] Implement memory tool
+- [x] Implement session search tool
+- [x] Implement TTS tool (Edge TTS + ElevenLabs)
+- [x] Implement vision tool
+- [x] Implement Home Assistant tool
+- [x] Implement todo tool
+- [x] Implement image generation tool (DALL-E + FAL)
+- [x] Implement cron job tools
+- [x] Implement mixture of agents tool
+- [x] Implement transcription tool
+- [x] Implement approval system (is_destructive_command)
+- [x] Implement process registry
+- [x] Implement tool result size limiting and persistence
+- [x] Implement parallel tool execution with `_MAX_TOOL_WORKERS = 8`
+- [x] Implement parallel safety classification (never_parallel, parallel_safe, path_scoped)
+- [x] Unit tests: tool registration, approval detection, process lifecycle
 
 ---
 
@@ -1490,19 +1491,19 @@ enum HermesCommand {
 
 #### Checklist
 
-- [ ] Implement `hermes` binary with clap argument parsing
-- [ ] Implement `hermes-gateway` binary
-- [ ] Implement `hermes-acp` binary
-- [ ] Implement setup wizard (interactive configuration)
-- [ ] Implement `hermes doctor` diagnostics
+- [x] Implement `hermes` binary with clap argument parsing
+- [x] Implement `hermes-gateway` binary
+- [x] Implement `hermes-acp` binary
+- [x] Implement setup wizard (interactive configuration)
+- [x] Implement `hermes doctor` diagnostics
 - [ ] Implement `hermes update` (download latest binary)
 - [ ] Implement `hermes backup` (export/import config + sessions)
-- [ ] Implement `hermes logs` (session log viewing)
-- [ ] Implement `hermes uninstall`
-- [ ] Implement shell completion generation (bash, zsh, fish)
+- [x] Implement `hermes logs` (session log viewing)
+- [x] Implement `hermes uninstall`
+- [x] Implement shell completion generation (bash, zsh, fish)
 - [ ] Implement config migration (detect old config, auto-migrate)
-- [ ] Implement environment variable loading (~/.hermes/.env)
-- [ ] Integration test: full `hermes` CLI session
+- [x] Implement environment variable loading (~/.hermes/.env)
+- [x] Integration test: full `hermes` CLI session
 - [ ] Integration test: `hermes gateway start` with Telegram
 
 ---
@@ -1644,22 +1645,22 @@ acp binary → acp, query, api, tools, core
 ## 9. Implementation Order and Timeline Estimate
 
 ```
-Phase 1  (Workspace + Core)       ████████████████████░░  ~3 days
-Phase 2  (API Client)             ░░░░████████████████░░  ~3 days  (depends on P1)
-Phase 3  (Tool Framework)         ░░░░░░░░██████████████  ~5 days  (depends on P1)
-Phase 4  (Query Loop)             ░░░░░░░░░░░░██████████  ~4 days  (depends on P1-3)
-Phase 5  (SQLite Store)           ░░░░████████████████░░  ~2 days  (depends on P1)
-Phase 6  (TUI)                    ░░░░░░░░░░░░░░░░██████  ~4 days  (depends on P4)
-Phase 7  (Commands)               ░░░░░░░░░░░░░░░░░░████  ~3 days  (depends on P4,6)
-Phase 8  (Terminal Backends)      ░░░░░░░░░░░░██████░░░░  ~4 days  (depends on P3)
-Phase 9  (Memory + Skills)        ░░░░░░░░░░░░░░░░░░████  ~3 days  (depends on P4,5)
-Phase 10 (MCP Client)             ░░░░░░░░░░░░░░░░░░████  ~3 days  (depends on P3)
-Phase 11 (Gateway + Platforms)    ░░░░░░░░░░░░░░░░░░░███  ~8 days  (depends on P4,5)
-Phase 12 (Cron Scheduler)         ░░░░░░░░░░░░░░░░░░░░░░  ~2 days  (depends on P11)
-Phase 13 (Web UI)                 ░░░░░░░░░░░░░░░░░░░░░░  ~2 days  (depends on P4)
-Phase 14 (ACP Server)             ░░░░░░░░░░░░░░░░░░░░░░  ~2 days  (depends on P4)
-Phase 15 (Plugin System)          ░░░░░░░░░░░░░░░░░░░░░░  ~2 days  (depends on P1,7)
-Phase 16 (CLI Binary + Integration)░░░░░░░░░░░░░░░░░░░░░  ~3 days  (depends on ALL)
+Phase 1  (Workspace + Core)       ████████████████████  ~3 days  DONE
+Phase 2  (API Client)             ████████████████████  ~3 days  (depends on P1) DONE
+Phase 3  (Tool Framework)         ████████████████████  ~5 days  (depends on P1) DONE
+Phase 4  (Query Loop)             ████████████████████  ~4 days  (depends on P1-3) DONE
+Phase 5  (SQLite Store)           ████████████████████  ~2 days  (depends on P1) DONE
+Phase 6  (TUI)                    ████████████████████  ~4 days  (depends on P4) DONE
+Phase 7  (Commands)               ████████████████████  ~3 days  (depends on P4,6) DONE
+Phase 8  (Terminal Backends)      ████████████████████  ~4 days  (depends on P3) DONE
+Phase 9  (Memory + Skills)        ████████████████████  ~3 days  (depends on P4,5) DONE
+Phase 10 (MCP Client)             ████████████████████  ~3 days  (depends on P3) DONE
+Phase 11 (Gateway + Platforms)    ████████████████████  ~8 days  (depends on P4,5) DONE
+Phase 12 (Cron Scheduler)         ████████████████████  ~2 days  (depends on P11) DONE
+Phase 13 (Web UI)                 ████████████████████  ~2 days  (depends on P4) DONE
+Phase 14 (ACP Server)             ████████████████████  ~2 days  (depends on P4) DONE
+Phase 15 (Plugin System)          ████████████████████  ~2 days  (depends on P1,7) DONE
+Phase 16 (CLI Binary + Integration)████████████████████  ~3 days  (depends on ALL) DONE
 ```
 
 Phases 5, 8, 9, 10 can run in parallel after Phase 3/4.

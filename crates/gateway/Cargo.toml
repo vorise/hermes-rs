@@ -1,0 +1,24 @@
+[package]
+name = "h-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "Messaging platform gateway"
+
+[dependencies]
+h-core = { path = "../core" }
+h-api = { path = "../api" }
+h-tools = { path = "../tools" }
+h-query = { path = "../query" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+axum = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }

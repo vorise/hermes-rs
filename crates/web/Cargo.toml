@@ -1,0 +1,24 @@
+[package]
+name = "h-web"
+version = "0.1.0"
+edition = "2021"
+description = "Web UI server"
+
+[dependencies]
+h-core = { path = "../core" }
+h-api = { path = "../api" }
+h-query = { path = "../query" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+futures-util = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio-stream = "0.1"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

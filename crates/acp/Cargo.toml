@@ -1,0 +1,17 @@
+[package]
+name = "h-acp"
+version = "0.1.0"
+edition = "2021"
+description = "ACP server (VS Code / Zed / JetBrains)"
+
+[dependencies]
+h-core = { path = "../core" }
+h-query = { path = "../query" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }

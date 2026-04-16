@@ -1,0 +1,20 @@
+[package]
+name = "h-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared types, config, sessions, memory, skills for Hermes Agent"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+parking_lot = { workspace = true }
+glob = { workspace = true }
+rusqlite = { workspace = true }
