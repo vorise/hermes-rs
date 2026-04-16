@@ -1,0 +1,38 @@
+[package]
+name = "hermes-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "hermes"
+path = "src/main.rs"
+
+[dependencies]
+h-core = { path = "../core" }
+h-api = { path = "../api" }
+h-tools = { path = "../tools" }
+h-query = { path = "../query" }
+h-tui = { path = "../tui" }
+h-commands = { path = "../commands" }
+h-mcp = { path = "../mcp" }
+h-gateway = { path = "../gateway" }
+h-acp = { path = "../acp" }
+h-envs = { path = "../envs" }
+h-web = { path = "../web" }
+h-plugins = { path = "../plugins" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
