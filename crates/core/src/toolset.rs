@@ -36,6 +36,10 @@ pub enum Toolset {
     CronJob,
     /// Transcription
     Transcription,
+    /// Voice input
+    Voice,
+    /// MCP client tools
+    Mcp,
 }
 
 impl Toolset {
@@ -57,6 +61,8 @@ impl Toolset {
             Toolset::ImageGen => "image_gen",
             Toolset::CronJob => "cron_job",
             Toolset::Transcription => "transcription",
+            Toolset::Voice => "voice",
+            Toolset::Mcp => "mcp",
         }
     }
 }
@@ -87,6 +93,8 @@ impl std::str::FromStr for Toolset {
             "image_gen" => Ok(Toolset::ImageGen),
             "cron_job" => Ok(Toolset::CronJob),
             "transcription" => Ok(Toolset::Transcription),
+            "voice" => Ok(Toolset::Voice),
+            "mcp" => Ok(Toolset::Mcp),
             _ => Err(format!("unknown toolset: {s}")),
         }
     }

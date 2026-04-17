@@ -6,6 +6,7 @@ use reqwest::Client;
 type BoxedStream = futures::stream::BoxStream<'static, Result<Delta>>;
 
 use crate::error::{classify_error, ApiError, RetryConfig, with_retry};
+use crate::prompt_cache::apply_cache_control;
 use crate::provider::ApiMode;
 use crate::streaming::{
     parse_anthropic_sse, parse_sse_line, AnthropicEvent, ApiResponse, Delta, StreamToolCall,
@@ -265,6 +266,7 @@ impl ApiClient {
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "prompt-caching-2024-07-31")
             .header("content-type", "application/json")
             .json(&body)
             .send()
@@ -395,7 +397,7 @@ impl ApiClient {
 
         let mut body = serde_json::json!({
             "model": self.model.0,
-            "messages": messages_to_anthropic(&user_messages),
+            "messages": apply_cache_to_messages(&user_messages),
             "max_tokens": self.max_tokens.unwrap_or(4096),
         });
 
@@ -689,6 +691,17 @@ fn messages_to_anthropic(messages: &[&Message]) -> serde_json::Value {
             .collect::<Vec<_>>(),
     )
     .unwrap_or_default()
+}
+
+/// Convert messages to Anthropic format with prompt caching applied.
+fn apply_cache_to_messages(messages: &[&Message]) -> serde_json::Value {
+    let mut result = messages_to_anthropic(messages);
+    if let Some(arr) = result.as_array_mut() {
+        let mut vec: Vec<serde_json::Value> = std::mem::take(arr);
+        apply_cache_control(&mut vec);
+        *arr = vec;
+    }
+    result
 }
 
 fn parse_sse_chunk(chunk: &str) -> Option<Delta> {

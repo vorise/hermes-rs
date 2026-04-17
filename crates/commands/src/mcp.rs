@@ -20,7 +20,7 @@ impl SlashCommand for McpCommand {
         "integration"
     }
 
-    async fn execute(&self, args: &str, _ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, args: &str, ctx: &CommandContext) -> Result<CommandResult> {
         let parts: Vec<&str> = args.split_whitespace().collect();
 
         match parts.first().copied() {
@@ -28,8 +28,8 @@ impl SlashCommand for McpCommand {
             Some("add") => cmd_add(&parts[1..]),
             Some("remove") => cmd_remove(&parts[1..]),
             Some("status") => cmd_status(),
-            Some("connect") => cmd_connect(&parts[1..]),
-            Some("disconnect") => cmd_disconnect(&parts[1..]),
+            Some("connect") => cmd_connect(ctx, parts.get(1).copied().unwrap_or("")).await,
+            Some("disconnect") => cmd_disconnect(ctx, parts.get(1).copied().unwrap_or("")).await,
             Some("tools") => cmd_tools(),
             Some(sub) => Ok(CommandResult::Message(format!(
                 "Unknown mcp subcommand: {sub}. Use /mcp help for usage."
@@ -155,36 +155,36 @@ fn cmd_status() -> Result<CommandResult> {
     Ok(CommandResult::Message(output))
 }
 
-fn cmd_connect(args: &[&str]) -> Result<CommandResult> {
-    if args.is_empty() {
+async fn cmd_connect(ctx: &CommandContext, name: &str) -> Result<CommandResult> {
+    if name.is_empty() {
         return Ok(CommandResult::Message(
             "Usage: /mcp connect <name>".to_string(),
         ));
     }
+    let mcp_state = ctx.mcp_state
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("MCP subsystem not initialized"))?;
 
-    let name = args[0];
-    let config = h_mcp::McpConfig::from_default().ok();
-
-    let _entry = config
-        .and_then(|c| c.get_server(name).cloned())
-        .ok_or_else(|| anyhow::anyhow!("MCP server '{name}' not found in config"))?;
-
-    Ok(CommandResult::Message(format!(
-        "Connecting to MCP server '{name}'... (runtime connection not yet wired into query loop)"
-    )))
+    match mcp_state.connect_server(name).await {
+        Ok(msg) => Ok(CommandResult::Message(msg)),
+        Err(e) => Ok(CommandResult::Message(format!("Failed to connect: {e}"))),
+    }
 }
 
-fn cmd_disconnect(args: &[&str]) -> Result<CommandResult> {
-    if args.is_empty() {
+async fn cmd_disconnect(ctx: &CommandContext, name: &str) -> Result<CommandResult> {
+    if name.is_empty() {
         return Ok(CommandResult::Message(
             "Usage: /mcp disconnect <name>".to_string(),
         ));
     }
+    let mcp_state = ctx.mcp_state
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("MCP subsystem not initialized"))?;
 
-    let name = args[0];
-    Ok(CommandResult::Message(format!(
-        "Disconnecting from MCP server '{name}'..."
-    )))
+    match mcp_state.disconnect_server(name).await {
+        Ok(msg) => Ok(CommandResult::Message(msg)),
+        Err(e) => Ok(CommandResult::Message(format!("Failed to disconnect: {e}"))),
+    }
 }
 
 fn cmd_tools() -> Result<CommandResult> {
@@ -282,6 +282,7 @@ mod tests {
             is_processing: false,
             interrupt_notify: Arc::new(Notify::new()),
             hermes_config: h_core::HermesConfig::default(),
+            mcp_state: None,
         }
     }
 }

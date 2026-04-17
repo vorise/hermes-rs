@@ -7,6 +7,8 @@ description = "ACP server (VS Code / Zed / JetBrains)"
 [dependencies]
 h-core = { path = "../core" }
 h-query = { path = "../query" }
+h-api = { path = "../api" }
+h-tools = { path = "../tools" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

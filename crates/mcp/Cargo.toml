@@ -17,4 +17,5 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 parking_lot = { workspace = true }
 reqwest = { workspace = true }
+url = { workspace = true }
 futures-util = { workspace = true }

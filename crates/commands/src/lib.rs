@@ -4,9 +4,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use h_core::{CostTracker, HermesConfig, Message, ModelRef};
 use h_core::session_db::SessionDB;
+use h_mcp::McpState;
 use tokio::sync::Notify;
 
+mod checkpoint;
 mod compress;
+mod config_cmd;
 mod doctor;
 mod export;
 mod help;
@@ -15,15 +18,20 @@ mod mcp;
 mod memory;
 mod model;
 mod new;
+mod nudge;
 mod personality;
+mod platforms;
 mod retry;
+mod sethome;
 mod skills;
+mod speak;
 mod status;
 mod stop;
 mod summarize;
 mod title;
 mod tools;
 mod undo;
+mod voice;
 mod usage;
 
 /// Result of executing a slash command.
@@ -52,6 +60,25 @@ pub enum ConfigChange {
     Personality(String),
     /// Set session title.
     Title(String),
+    /// Restore from a checkpoint.
+    RestoreCheckpoint {
+        checkpoint_id: i64,
+        session_id: String,
+        turn: u32,
+        message_count: usize,
+    },
+    /// Enable a toolset.
+    EnableToolset(String),
+    /// Disable a toolset.
+    DisableToolset(String),
+    /// Enable a skill.
+    EnableSkill(String),
+    /// Disable a skill.
+    DisableSkill(String),
+    /// Set memory nudge interval (0 = disabled).
+    SetMemoryNudgeInterval(u32),
+    /// Set skill nudge interval (0 = disabled).
+    SetSkillNudgeInterval(u32),
 }
 
 /// Context available to all command handlers.
@@ -74,6 +101,8 @@ pub struct CommandContext {
     pub interrupt_notify: Arc<Notify>,
     /// Hermes home directory config.
     pub hermes_config: HermesConfig,
+    /// Shared MCP state (client + tool registry), if available.
+    pub mcp_state: Option<Arc<McpState>>,
 }
 
 impl CommandContext {
@@ -98,6 +127,7 @@ impl CommandContext {
             is_processing,
             interrupt_notify,
             hermes_config,
+            mcp_state: None,
         }
     }
 }
@@ -266,5 +296,12 @@ pub fn all_commands() -> Vec<Box<dyn SlashCommand>> {
         Box::new(crate::insights::InsightsCommand),
         Box::new(crate::doctor::DoctorCommand),
         Box::new(crate::mcp::McpCommand),
+        Box::new(crate::config_cmd::ConfigCommand),
+        Box::new(crate::platforms::PlatformsCommand),
+        Box::new(crate::sethome::SethomeCommand),
+        Box::new(crate::speak::SpeakCommand),
+        Box::new(crate::voice::VoiceCommand),
+        Box::new(crate::checkpoint::CheckpointCommand),
+        Box::new(crate::nudge::NudgeCommand),
     ]
 }

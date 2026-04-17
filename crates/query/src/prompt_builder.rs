@@ -172,14 +172,77 @@ impl PromptBuilder {
 
     /// Build with all default guidance enabled (CLI mode).
     pub fn build_cli() -> String {
-        Self::new()
+        let mut builder = Self::new()
             .platform_hint(PLATFORM_HINTES_CLI)
             .tool_guidance(TOOL_USE_ENFORCEMENT)
             .memory_guidance()
             .session_search_guidance()
-            .skills_guidance()
-            .build()
+            .skills_guidance();
+
+        // Load personality from SOUL.md if it exists
+        if let Some(soul_path) = find_soul_path() {
+            if let Some(content) = load_soul(&soul_path) {
+                builder = builder.personality(&content);
+            }
+        }
+
+        // Load context files from current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            for file_content in load_context_files(&cwd) {
+                builder = builder.context_file(&file_content);
+            }
+
+            // Discover and inject subdirectory hints
+            if let Ok(hints) = discover_subdirectory_hints(&cwd) {
+                if !hints.is_empty() {
+                    builder = builder.env_hint(&hints);
+                }
+            }
+        }
+
+        builder.build()
     }
+}
+
+/// Find the SOUL.md file path, checking custom path and default location.
+fn find_soul_path() -> Option<std::path::PathBuf> {
+    // Check HERMES_SOUL_PATH env var for custom path
+    if let Ok(path) = std::env::var("HERMES_SOUL_PATH") {
+        let p = std::path::PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Check ~/.hermes/SOUL.md or $HERMES_HOME/SOUL.md
+    let home = std::env::var("HERMES_HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".hermes"))
+        });
+
+    home.map(|h| h.join("SOUL.md")).filter(|p| p.exists())
+}
+
+/// Discover subdirectory context hints for the given root directory.
+/// Returns a formatted string suitable for injection into the system prompt.
+fn discover_subdirectory_hints(root: &std::path::Path) -> std::io::Result<String> {
+    use h_core::subdirectory_hints::SubdirectoryHints;
+
+    let mut hints = SubdirectoryHints::new();
+    hints.add_search_root(root);
+    if hints.discover().is_err() {
+        return Ok(String::new());
+    }
+
+    if hints.is_empty() {
+        return Ok(String::new());
+    }
+
+    Ok(hints.build_hint_for_dir(root))
 }
 
 /// Load personality from SOUL.md if it exists.

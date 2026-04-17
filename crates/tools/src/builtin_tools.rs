@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -3163,6 +3163,7 @@ mod tests {
             task_id: "test".to_string(),
             config: std::sync::Arc::new(h_core::HermesConfig::default()),
             working_dir: std::env::temp_dir(),
+            clarify: None,
         }
     }
 
@@ -3763,6 +3764,152 @@ enabled: true
         assert!(result.is_error);
         assert!(result.content.contains("E2B_API_KEY") || result.content.contains("configured"));
     }
+
+    #[tokio::test]
+    async fn test_clarify_without_callback() {
+        let tool = ClarifyTool;
+        let ctx = test_ctx(); // clarify: None
+
+        let result = tool.execute(
+            json!({"question": "What is your preferred language?"}),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("What is your preferred language?"));
+        assert!(result.content.contains("Interactive mode not available"));
+    }
+
+    #[tokio::test]
+    async fn test_clarify_with_choices_without_callback() {
+        let tool = ClarifyTool;
+        let ctx = test_ctx();
+
+        let result = tool.execute(
+            json!({
+                "question": "Choose a language",
+                "choices": ["Rust", "Python", "Go"]
+            }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("Choose a language"));
+        assert!(result.content.contains("1. Rust"));
+        assert!(result.content.contains("2. Python"));
+        assert!(result.content.contains("3. Go"));
+    }
+
+    #[tokio::test]
+    async fn test_clarify_with_callback() {
+        use std::sync::Arc;
+
+        let tool = ClarifyTool;
+        let ctx = ToolContext {
+            session_id: "test".to_string(),
+            task_id: "test".to_string(),
+            config: std::sync::Arc::new(h_core::HermesConfig::default()),
+            working_dir: std::env::temp_dir(),
+            clarify: Some(Arc::new(|question: &str, _choices: &[&str]| {
+                assert!(question.contains("language"));
+                "Rust".to_string()
+            })),
+        };
+
+        let result = tool.execute(
+            json!({"question": "What is your preferred programming language?"}),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("User answered: Rust"));
+    }
+}
+
+// ─── Clarify Tool (Interactive User Question) ────────────────────────────
+
+/// Ask the user an interactive question with optional choices.
+///
+/// This is the only tool marked as "never parallel" in the spec. It uses
+/// the clarify callback in ToolContext to prompt the user directly.
+pub struct ClarifyTool;
+
+#[async_trait]
+impl Tool for ClarifyTool {
+    fn name(&self) -> &str {
+        "clarify"
+    }
+
+    fn toolset(&self) -> &str {
+        "core"
+    }
+
+    fn description(&self) -> &str {
+        "Ask the user a clarifying question with optional choices. \
+        Use this when you need more information before proceeding. \
+        Returns the user's selected answer."
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask the user"
+                },
+                "choices": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional list of choices for the user to select from"
+                }
+            },
+            "required": ["question"]
+        })
+    }
+
+    fn requires_env(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let question = args.get("question")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing required argument: question"))?;
+
+        let choices: Vec<&str> = args.get("choices")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Use the clarify callback if available
+        if let Some(ref callback) = ctx.clarify {
+            let answer = callback(question, &choices);
+            return Ok(ToolResult::ok(format!("User answered: {answer}")));
+        }
+
+        // Fallback: no interactive mode available
+        if choices.is_empty() {
+            Ok(ToolResult::ok(format!(
+                "Question: {question}\n\n\
+                (Interactive mode not available. Please respond with your answer in the next message.)"
+            )))
+        } else {
+            let choices_str = choices.iter()
+                .enumerate()
+                .map(|(i, c)| format!("  {}. {c}", i + 1))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(ToolResult::ok(format!(
+                "Question: {question}\n\nChoices:\n{choices_str}\n\n\
+                (Interactive mode not available. Please respond with your choice number or text in the next message.)"
+            )))
+        }
+    }
 }
 
 // ─── Delegate Tool (Subagent) ────────────────────────────────────────────
@@ -3984,5 +4131,291 @@ impl DelegateTool {
             }
             Err(e) => Ok(ToolResult::err(format!("Subagent request failed: {e}"))),
         }
+    }
+}
+
+// ─── Voice Tool (Speech-to-Text) ─────────────────────────────────────────
+
+/// Voice input transcription tool.
+///
+/// Transcribes audio files or base64 audio data to text using OpenAI Whisper.
+/// Supports wav, mp3, mp4, mpeg, mpga, m4a, ogg, and webm formats.
+/// Max audio length: 25MB.
+const MAX_AUDIO_SIZE: usize = 25 * 1024 * 1024; // 25MB Whisper limit
+
+pub struct VoiceTool {
+    client: reqwest::Client,
+}
+
+impl VoiceTool {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl Default for VoiceTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for VoiceTool {
+    fn name(&self) -> &str {
+        "voice"
+    }
+
+    fn toolset(&self) -> &str {
+        "voice"
+    }
+
+    fn description(&self) -> &str {
+        "Transcribe speech audio to text. Accepts an audio file path, URL, \
+        or base64-encoded audio data. Supports wav, mp3, mp4, mpeg, mpga, m4a, ogg, webm. \
+        Max audio size: 25MB. Requires OPENAI_API_KEY."
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "audio_path": {
+                    "type": "string",
+                    "description": "Path to a local audio file"
+                },
+                "audio_url": {
+                    "type": "string",
+                    "description": "URL of an audio file to transcribe"
+                },
+                "audio_base64": {
+                    "type": "string",
+                    "description": "Base64-encoded audio data"
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Language code (e.g., 'en', 'zh', default: auto-detect)"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Optional text to guide the model's transcription style"
+                }
+            },
+            "required": []
+        })
+    }
+
+    fn requires_env(&self) -> &'static [&'static str] {
+        &["OPENAI_API_KEY"]
+    }
+
+    async fn execute(&self, args: Value, _ctx: &ToolContext) -> Result<ToolResult> {
+        let audio_path = args.get("audio_path").and_then(|v| v.as_str());
+        let audio_url = args.get("audio_url").and_then(|v| v.as_str());
+        let audio_base64 = args.get("audio_base64").and_then(|v| v.as_str());
+        let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+
+        if audio_path.is_none() && audio_url.is_none() && audio_base64.is_none() {
+            return Ok(ToolResult::err(
+                "Provide audio_path, audio_url, or audio_base64".to_string()
+            ));
+        }
+
+        // Fetch audio bytes from the provided source
+        let audio_bytes = if let Some(path) = audio_path {
+            let path_buf = std::path::PathBuf::from(path);
+            if !path_buf.exists() {
+                return Ok(ToolResult::err(format!("Audio file not found: {path}")));
+            }
+            let metadata = std::fs::metadata(&path_buf)?;
+            if metadata.len() as usize > MAX_AUDIO_SIZE {
+                return Ok(ToolResult::err(format!(
+                    "Audio file too large ({} bytes). Maximum: {} bytes",
+                    metadata.len(), MAX_AUDIO_SIZE
+                )));
+            }
+            std::fs::read(&path_buf).with_context(|| format!("Failed to read audio file: {path}"))?
+        } else if let Some(url) = audio_url {
+            let resp = self.client.get(url).send().await?;
+            if !resp.status().is_success() {
+                return Ok(ToolResult::err(
+                    format!("Failed to fetch audio from URL: {}", resp.status())
+                ));
+            }
+            let bytes = resp.bytes().await?.to_vec();
+            if bytes.len() > MAX_AUDIO_SIZE {
+                return Ok(ToolResult::err(format!(
+                    "Audio too large ({} bytes). Maximum: {} bytes",
+                    bytes.len(), MAX_AUDIO_SIZE
+                )));
+            }
+            bytes
+        } else if let Some(b64) = audio_base64 {
+            let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+                .with_context(|| "Failed to decode base64 audio")?;
+            if bytes.len() > MAX_AUDIO_SIZE {
+                return Ok(ToolResult::err(format!(
+                    "Audio too large ({} bytes). Maximum: {} bytes",
+                    bytes.len(), MAX_AUDIO_SIZE
+                )));
+            }
+            bytes
+        } else {
+            return Ok(ToolResult::err("No audio provided".to_string()));
+        };
+
+        // Determine filename with extension for Whisper API
+        let filename = if let Some(path) = audio_path {
+            std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("audio.mp3")
+                .to_string()
+        } else {
+            "audio.mp3".to_string()
+        };
+
+        // Call Whisper API
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
+
+        match api_key {
+            Some(api_key) => {
+                self.call_whisper(&audio_bytes, &filename, language, prompt, &api_key).await
+            }
+            None => Ok(ToolResult::ok(
+                "Voice transcription requested but OPENAI_API_KEY is not configured. \
+                Set OPENAI_API_KEY to enable Whisper transcription."
+            )),
+        }
+    }
+}
+
+impl VoiceTool {
+    async fn call_whisper(
+        &self,
+        audio_bytes: &[u8],
+        filename: &str,
+        language: &str,
+        prompt: &str,
+        api_key: &str,
+    ) -> Result<ToolResult> {
+        let mut form = reqwest::multipart::Form::new()
+            .text("model", "whisper-1")
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+                    .file_name(filename.to_string())
+                    .mime_str("audio/mpeg")
+                    .unwrap(),
+            );
+
+        if !language.is_empty() {
+            form = form.text("language", language.to_string());
+        }
+        if !prompt.is_empty() {
+            form = form.text("prompt", prompt.to_string());
+        }
+
+        let resp = self.client
+            .post("https://api.openai.com/v1/audio/transcriptions")
+            .header("Authorization", format!("Bearer {api_key}"))
+            .multipart(form)
+            .send()
+            .await?;
+
+        match resp {
+            resp if resp.status().is_success() => {
+                #[derive(serde::Deserialize)]
+                struct WhisperResponse {
+                    text: String,
+                }
+                let body: Result<WhisperResponse, _> = resp.json().await;
+                match body {
+                    Ok(r) => {
+                        let text = r.text.trim().to_string();
+                        if text.is_empty() {
+                            Ok(ToolResult::ok("(no speech detected)".to_string()))
+                        } else {
+                            Ok(ToolResult::ok(text))
+                        }
+                    }
+                    Err(e) => Ok(ToolResult::err(format!("Failed to parse Whisper response: {e}"))),
+                }
+            }
+            resp => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                Ok(ToolResult::err(format!("Whisper API error ({status}): {body}")))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_voice_no_audio() {
+        let tool = VoiceTool::new();
+        let ctx = ToolContext::default();
+        let result = tool.execute(json!({}), &ctx).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("Provide"));
+    }
+
+    #[tokio::test]
+    async fn test_voice_file_not_found() {
+        let tool = VoiceTool::new();
+        let ctx = ToolContext::default();
+        let result = tool.execute(
+            json!({"audio_path": "/nonexistent/audio.wav"}),
+            &ctx,
+        ).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_voice_no_api_key() {
+        // Create a small valid audio file (minimal WAV header + silence)
+        let dir = std::env::temp_dir().join("hermes_voice_test");
+        std::fs::create_dir_all(&dir).ok();
+        let audio_file = dir.join("test.wav");
+        // Minimal WAV file (44 bytes header + 100 bytes of silence)
+        let mut wav_data = vec![0u8; 144];
+        // RIFF header
+        wav_data[0..4].copy_from_slice(b"RIFF");
+        wav_data[8..12].copy_from_slice(b"WAVE");
+        wav_data[12..16].copy_from_slice(b"fmt ");
+        wav_data[16..20].copy_from_slice(&16u32.to_le_bytes()); // chunk size
+        wav_data[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM
+        wav_data[22..24].copy_from_slice(&1u16.to_le_bytes()); // mono
+        wav_data[24..28].copy_from_slice(&16000u32.to_le_bytes()); // sample rate
+        wav_data[28..32].copy_from_slice(&32000u32.to_le_bytes()); // byte rate
+        wav_data[32..34].copy_from_slice(&2u16.to_le_bytes()); // block align
+        wav_data[34..36].copy_from_slice(&16u16.to_le_bytes()); // bits per sample
+        wav_data[36..40].copy_from_slice(b"data");
+        wav_data[40..44].copy_from_slice(&100u32.to_le_bytes()); // data size
+        std::fs::write(&audio_file, &wav_data).ok();
+
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
+        let tool = VoiceTool::new();
+        let ctx = ToolContext::default();
+        let result = tool.execute(
+            json!({"audio_path": audio_file.to_str().unwrap()}),
+            &ctx,
+        ).await.unwrap();
+        assert!(!result.is_error); // returns helpful message, not error
+        assert!(result.content.contains("OPENAI_API_KEY") || result.content.contains("api"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -6,6 +6,10 @@ use async_trait::async_trait;
 use h_core::{HermesConfig, ToolDefinition};
 use serde_json::Value;
 
+/// Callback for interactive user clarification.
+/// Takes a question and optional list of choices, returns the user's answer.
+pub type ClarifyCallback = Arc<dyn Fn(&str, &[&str]) -> String + Send + Sync>;
+
 /// Context provided to tool execution.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -13,6 +17,20 @@ pub struct ToolContext {
     pub task_id: String,
     pub config: Arc<HermesConfig>,
     pub working_dir: PathBuf,
+    /// Optional callback for interactive clarification requests.
+    pub clarify: Option<ClarifyCallback>,
+}
+
+impl Default for ToolContext {
+    fn default() -> Self {
+        Self {
+            session_id: String::new(),
+            task_id: String::new(),
+            config: Arc::new(HermesConfig::default()),
+            working_dir: std::env::current_dir().unwrap_or_default(),
+            clarify: None,
+        }
+    }
 }
 
 /// Result of a tool execution.

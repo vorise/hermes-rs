@@ -42,3 +42,5 @@ futures = { workspace = true }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }

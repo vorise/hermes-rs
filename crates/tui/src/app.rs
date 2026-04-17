@@ -9,6 +9,7 @@ use std::io::{self, Stdout};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
+use crate::completer::Completer;
 use crate::input::InputArea;
 use crate::output::OutputArea;
 use crate::skin_engine::Skin;
@@ -20,6 +21,7 @@ pub struct App {
     pub output: OutputArea,
     pub skin: Skin,
     pub spinner: Spinner,
+    pub completer: Completer,
     pub running: bool,
     pub is_processing: bool,
     pub model_info: String,
@@ -27,6 +29,10 @@ pub struct App {
     pub interrupt_notify: Arc<Notify>,
     pub input_history: Vec<String>,
     pub history_index: usize,
+    /// Current autocomplete state: the typed prefix before Tab was pressed.
+    pub autocomplete_prefix: Option<String>,
+    /// Suggestions currently being displayed.
+    pub autocomplete_suggestions: Option<String>,
 }
 
 impl App {
@@ -36,6 +42,7 @@ impl App {
             output: OutputArea::new(),
             skin: Skin::default(),
             spinner: Spinner::default(),
+            completer: Completer::new(),
             running: true,
             is_processing: false,
             model_info: String::new(),
@@ -43,12 +50,20 @@ impl App {
             interrupt_notify,
             input_history: Vec::new(),
             history_index: 0,
+            autocomplete_prefix: None,
+            autocomplete_suggestions: None,
         }
     }
 
     pub fn with_model(mut self, model: &str) -> Self {
         self.model_info = model.to_string();
         self
+    }
+
+    /// Register slash commands with the completer.
+    /// `commands` is a slice of (name, description, aliases) tuples.
+    pub fn with_commands(&mut self, commands: &[(&str, &str, &[&str])]) {
+        self.completer = crate::completer::build_completer(commands);
     }
 
     pub fn submit_input(&mut self) -> Option<String> {
@@ -242,13 +257,17 @@ fn handle_key_event(app: &mut App, key: KeyEvent) {
             app.navigate_history_down();
         }
 
-        // Tab: autocomplete (placeholder)
+        // Tab: autocomplete
         (KeyModifiers::NONE, KeyCode::Tab) => {
-            // TODO: implement slash command autocomplete
+            if !app.is_processing {
+                handle_autocomplete(app);
+            }
         }
 
-        // Escape: cancel input
+        // Escape: cancel input and autocomplete
         (KeyModifiers::NONE, KeyCode::Esc) => {
+            app.autocomplete_prefix = None;
+            app.autocomplete_suggestions = None;
             app.input.clear();
         }
 
@@ -263,14 +282,54 @@ fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Print a banner before TUI starts.
+/// Handle Tab-based autocomplete for slash commands.
+fn handle_autocomplete(app: &mut App) {
+    let text = app.input.get_text();
+
+    // Only autocomplete for slash commands
+    if !text.starts_with('/') {
+        return;
+    }
+
+    // Extract the prefix after the `/`
+    let prefix = text[1..].trim();
+
+    // Check if we're cycling through suggestions
+    if let Some(ref saved_prefix) = app.autocomplete_prefix {
+        if prefix == saved_prefix {
+            // User pressed Tab again — cycle to next suggestion
+            if let Some(ref suggestions) = app.autocomplete_suggestions {
+                // Show next suggestion (simplified: just re-display the list)
+                app.output.add_line(&format!("\n{suggestions}"));
+                return;
+            }
+        }
+    }
+
+    // Try to complete
+    if let Some(completion) = app.completer.complete(prefix) {
+        app.input.set_text(format!("/{completion}"));
+        app.autocomplete_prefix = Some(prefix.to_string());
+        app.autocomplete_suggestions = None;
+    } else {
+        // No single completion — show suggestions
+        let formatted = app.completer.format_suggestions(prefix, 5);
+        if !formatted.is_empty() {
+            app.autocomplete_prefix = Some(prefix.to_string());
+            app.autocomplete_suggestions = Some(formatted.clone());
+            app.output.add_line(&formatted);
+        }
+    }
+}
+
+/// Print an ASCII art banner before TUI starts.
 pub fn print_banner(version: &str, model: &str) {
-    println!("╔══════════════════════════════════════════════════╗");
-    println!("║              Hermes Agent                       ║");
-    println!("║              v{version:<38}║");
-    println!("║              Model: {model:<33}║");
-    println!("╚══════════════════════════════════════════════════╝");
-    println!();
+    println!(r#"
+ █░█ █▀▀ █▀▄   █▀ █▀▀ █▀   █░█░█ █▀▀ █▀▀ █▀▀ █░█ █▀░ █▀   █▄░█ █░█ ▀█▀ █▀█ █▀▄   █▀█ █▀█ █▀▄ █░▀ █░█ ▀█▀
+ █▄█ ██▄ █▄   ▄█ ██▄ ▄█   ▀▄▀▄▀ ██▄ █▀░ ██▄ █▄█ ▄█ ▄█   █░▀█ █▄█ ░█░ █▀▄ █▄▀   █▀▀ █▀▄ █▄▀ █▄▀ █▄█ ░█░
+"#);
+    println!("  v{version}  |  Model: {model}");
+    println!("  Press Ctrl+C to exit, Ctrl+D to quit, Ctrl+L to clear\n");
 }
 
 #[cfg(test)]
@@ -321,5 +380,40 @@ mod tests {
 
         app.navigate_history_up();
         assert_eq!(app.input.get_text(), "first");
+    }
+
+    #[test]
+    fn test_autocomplete_completes_single_match() {
+        let notify = Arc::new(Notify::new());
+        let mut app = App::new(notify);
+        app.with_commands(&[("compress", "Compress context", &[]), ("model", "Switch model", &[])]);
+
+        app.input.set_text("/comp".to_string());
+        handle_autocomplete(&mut app);
+        assert_eq!(app.input.get_text(), "/compress");
+    }
+
+    #[test]
+    fn test_autocomplete_ignores_non_slash() {
+        let notify = Arc::new(Notify::new());
+        let mut app = App::new(notify);
+        app.with_commands(&[("help", "Show help", &[])]);
+
+        app.input.set_text("help".to_string());
+        handle_autocomplete(&mut app);
+        // No change — doesn't start with `/`
+        assert_eq!(app.input.get_text(), "help");
+    }
+
+    #[test]
+    fn test_autocomplete_shows_suggestions() {
+        let notify = Arc::new(Notify::new());
+        let mut app = App::new(notify);
+        app.with_commands(&[("model", "Switch model", &[]), ("memory", "View memories", &[])]);
+
+        app.input.set_text("/m".to_string());
+        handle_autocomplete(&mut app);
+        // Can't disambiguate "m" further, so shows suggestions
+        assert!(app.autocomplete_suggestions.is_some());
     }
 }

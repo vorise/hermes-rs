@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use h_api::client::ApiClient;
+use h_api::provider::ApiMode;
+use h_core::{HermesConfig, Message, ModelId, ModelRef, ProviderId};
+use h_query::{QueryConfig, QueryLoop, ToolRegistry};
+use h_tools::Tool;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Notify;
@@ -11,7 +16,7 @@ use crate::protocol::{
     AcpError, AcpRequest, AcpResponse, ErrorCode, InitializeParams, InitializeResult,
     Method, ServerCapabilities, SetFileContextParams, SetSelectionParams,
     SendMessageParams, GitStatusResult, GitDiffResult, GitLogEntry, GitLogResult,
-    TerminalExecParams, TerminalExecResult,
+    TerminalExecParams, TerminalExecResult, TerminalReadResult,
 };
 use crate::session::{AcpSession, SessionMessage};
 
@@ -24,6 +29,8 @@ pub struct AcpServer {
     interrupt: Arc<Notify>,
     workspace_path: String,
     git_integration: bool,
+    hermes_config: HermesConfig,
+    all_tools: Vec<Arc<dyn Tool>>,
 }
 
 impl AcpServer {
@@ -33,7 +40,21 @@ impl AcpServer {
             interrupt: Arc::new(Notify::new()),
             workspace_path,
             git_integration: true,
+            hermes_config: HermesConfig::default(),
+            all_tools: vec![],
         }
+    }
+
+    /// Set the hermes configuration.
+    pub fn with_config(mut self, config: HermesConfig) -> Self {
+        self.hermes_config = config;
+        self
+    }
+
+    /// Set the available tools.
+    pub fn with_tools(mut self, tools: Vec<Arc<dyn Tool>>) -> Self {
+        self.all_tools = tools;
+        self
     }
 
     /// Get interrupt signal for cancellation.
@@ -124,16 +145,7 @@ impl AcpServer {
             Method::GitDiff => self.handle_git_diff(id, params).await,
             Method::GitLog => self.handle_git_log(id, params).await,
             Method::TerminalExec => self.handle_terminal_exec(id, params).await,
-            Method::TerminalRead => {
-                Some(AcpResponse::error(
-                    id,
-                    AcpError {
-                        code: ErrorCode::METHOD_NOT_FOUND.0,
-                        message: "terminalRead not yet implemented".to_string(),
-                        data: None,
-                    },
-                ))
-            }
+            Method::TerminalRead => self.handle_terminal_read(id, params).await,
             Method::Notification => None, // notifications don't get responses
         }
     }
@@ -191,12 +203,12 @@ impl AcpServer {
             "acp-client".to_string(),
         );
 
-        // Add user message
+        // Add user message to ACP session
         self.session.add_message(&session_id, SessionMessage::user(msg_params.message.clone()));
 
         // Get context for prompt injection
         let context = self.session.get_context(&session_id);
-        let _prompt_with_context = if let Some(ctx) = context {
+        let prompt_with_context = if let Some(ctx) = context {
             let ctx_text = ctx.format_prompt_context();
             if !ctx_text.is_empty() {
                 format!("{}\n\n{}", ctx_text, msg_params.message)
@@ -207,13 +219,111 @@ impl AcpServer {
             msg_params.message.clone()
         };
 
-        // Echo response (placeholder - actual LLM call would go here)
-        let response_text = format!("Received: {}", msg_params.message);
-        self.session.add_message(&session_id, SessionMessage::assistant(response_text.clone()));
+        // Build messages for query loop from ACP session history
+        let acp_messages = match self.session.get_session(&session_id) {
+            Some(s) => s.messages.clone(),
+            None => vec![],
+        };
+
+        // Resolve model
+        let provider = self.hermes_config.provider.as_deref().unwrap_or("anthropic");
+        let model = self.hermes_config.model.as_deref().unwrap_or("claude-sonnet-4-6");
+        let model_ref = ModelRef::new(ProviderId::new(provider), ModelId::new(model));
+
+        // Build API client
+        let api_config = match self.build_api_config(&model_ref) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                let error_text = format!("API config error: {e}");
+                self.session.add_message(&session_id, SessionMessage::assistant(error_text.clone()));
+                return Some(AcpResponse::error(
+                    id,
+                    AcpError {
+                        code: ErrorCode::INTERNAL_ERROR.0,
+                        message: error_text,
+                        data: None,
+                    },
+                ));
+            }
+        };
+        let api_client = match ApiClient::new(api_config) {
+            Ok(client) => client,
+            Err(e) => {
+                let error_text = format!("API client error: {e}");
+                self.session.add_message(&session_id, SessionMessage::assistant(error_text.clone()));
+                return Some(AcpResponse::error(
+                    id,
+                    AcpError {
+                        code: ErrorCode::INTERNAL_ERROR.0,
+                        message: error_text,
+                        data: None,
+                    },
+                ));
+            }
+        };
+
+        // Build tool registry and definitions
+        let tool_registry = ToolRegistry::new();
+        let enabled_tools = self.filter_tools();
+        for tool in &enabled_tools {
+            tool_registry.register(tool.clone());
+        }
+        let tool_defs: Vec<_> = enabled_tools.iter().map(|t| t.to_definition()).collect();
+
+        // Convert ACP messages to core Messages (excluding the last user message - we'll use prompt_with_context)
+        let messages: Vec<Message> = acp_messages
+            .iter()
+            .filter(|m| m.role != "user" || m.content != msg_params.message)
+            .filter_map(|m| {
+                match m.role.as_str() {
+                    "user" => Some(Message::user(m.content.clone())),
+                    "assistant" => Some(Message::assistant(m.content.clone())),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        // Build system prompt
+        let system_prompt = self.build_system_prompt();
+
+        // Build query config
+        let mut query_config = QueryConfig::new(model_ref)
+            .with_system_prompt(system_prompt)
+            .with_max_iterations(90);
+
+        for m in &messages {
+            query_config = query_config.with_message(m.clone());
+        }
+        // Add the current user message with context
+        query_config = query_config.with_message(Message::user(prompt_with_context));
+        query_config = query_config.with_tools(tool_defs);
+
+        // Run query loop
+        let query_loop = QueryLoop::new(&query_config);
+        let interrupt = self.interrupt.clone();
+
+        let result = match query_loop.run(&api_client, &tool_registry, interrupt).await {
+            Ok(r) => r,
+            Err(e) => {
+                let error_text = format!("Query failed: {e}");
+                self.session.add_message(&session_id, SessionMessage::assistant(error_text.clone()));
+                return Some(AcpResponse::error(
+                    id,
+                    AcpError {
+                        code: ErrorCode::INTERNAL_ERROR.0,
+                        message: error_text,
+                        data: None,
+                    },
+                ));
+            }
+        };
+
+        // Save assistant response to ACP session
+        self.session.add_message(&session_id, SessionMessage::assistant(result.final_text.clone()));
 
         Some(AcpResponse::success(id, json!({
             "session_id": session_id,
-            "response": response_text,
+            "response": result.final_text,
         })))
     }
 
@@ -506,6 +616,28 @@ impl AcpServer {
         })))
     }
 
+    async fn handle_terminal_read(&self, id: Option<Value>, _params: Value) -> Option<AcpResponse> {
+        // Read recent terminal output by capturing the last few lines of shell history
+        // In a real terminal session, this would read the terminal buffer.
+        // For now, we read the last commands from shell history as a proxy.
+        let history_output = match tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg("fc -ln -20 2>/dev/null || tail -20 ~/.zsh_history 2>/dev/null || tail -20 ~/.bash_history 2>/dev/null || echo 'No terminal history available'")
+            .current_dir(&self.workspace_path)
+            .output()
+            .await
+        {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Err(e) => format!("Failed to read terminal history: {e}"),
+        };
+
+        Some(AcpResponse::success(id, json!(TerminalReadResult {
+            output: history_output,
+            has_active_process: false,
+            last_exit_code: None,
+        })))
+    }
+
     async fn run_git_command(&self, args: &[&str]) -> Result<String> {
         let output = tokio::process::Command::new("git")
             .args(args)
@@ -519,6 +651,71 @@ impl AcpServer {
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    fn build_api_config(&self, model_ref: &ModelRef) -> Result<h_api::client::ApiConfig> {
+        let provider = &model_ref.provider;
+        let model = &model_ref.model;
+
+        let env_var = match provider.as_str() {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" | "openrouter" => "OPENAI_API_KEY",
+            "nous" => "NOUS_API_KEY",
+            _ => "API_KEY",
+        };
+
+        let api_key = std::env::var(env_var)
+            .map_err(|_| anyhow::anyhow!("API key not found in environment: {env_var}"))?;
+
+        let base_url = self.hermes_config.base_url.clone().unwrap_or_else(|| match provider.as_str() {
+            "anthropic" => "https://api.anthropic.com".to_string(),
+            "openai" => "https://api.openai.com/v1".to_string(),
+            "openrouter" => "https://openrouter.ai/api/v1".to_string(),
+            "nous" => "https://api.nousresearch.com/v1".to_string(),
+            _ => "https://api.openai.com/v1".to_string(),
+        });
+
+        let api_mode = match provider.as_str() {
+            "anthropic" => ApiMode::AnthropicMessages,
+            _ => ApiMode::ChatCompletions,
+        };
+
+        Ok(h_api::client::ApiConfig {
+            provider: provider.clone(),
+            model: model.clone(),
+            base_url,
+            api_key,
+            api_mode,
+            max_tokens: Some(4096),
+            temperature: Some(0.7),
+            reasoning_effort: None,
+        })
+    }
+
+    fn filter_tools(&self) -> Vec<Arc<dyn Tool>> {
+        if let Some(ref disabled) = self.hermes_config.disabled_toolsets {
+            self.all_tools
+                .iter()
+                .filter(|t| !disabled.contains(&t.toolset().to_string()))
+                .cloned()
+                .collect()
+        } else if let Some(ref enabled) = self.hermes_config.enabled_toolsets {
+            self.all_tools
+                .iter()
+                .filter(|t| enabled.contains(&t.toolset().to_string()))
+                .cloned()
+                .collect()
+        } else {
+            self.all_tools.to_vec()
+        }
+    }
+
+    fn build_system_prompt(&self) -> String {
+        let mut prompt = h_query::PromptBuilder::build_cli();
+        if let Some(ref personality) = self.hermes_config.personality {
+            prompt = format!("{personality}\n\n{prompt}");
+        }
+        prompt
     }
 }
 
@@ -561,15 +758,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_send_message() {
+    async fn test_handle_send_message_no_api_key() {
         let server = AcpServer::new("/workspace".to_string());
         let params = json!({
             "message": "hello world"
         });
         let resp = server.handle_send_message(Some(json!(1)), params).await.unwrap();
-        assert!(resp.error.is_none());
-        let result = resp.result.unwrap();
-        assert!(result.get("response").is_some());
+        // Without API key, should return an error
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert!(err.message.contains("API key"));
     }
 
     #[tokio::test]

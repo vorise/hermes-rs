@@ -180,6 +180,34 @@ impl ProviderInfo {
         }
     }
 
+    pub fn gemini() -> Self {
+        Self {
+            id: ProviderId::new("gemini"),
+            display_name: "Google Gemini",
+            default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+            api_key_env: "GEMINI_API_KEY",
+            default_model: "gemini-2.5-pro",
+            supports_tools: true,
+            supports_vision: true,
+            supports_reasoning: true,
+            api_mode: ApiMode::ChatCompletions,
+        }
+    }
+
+    pub fn groq() -> Self {
+        Self {
+            id: ProviderId::new("groq"),
+            display_name: "Groq",
+            default_base_url: "https://api.groq.com/openai/v1",
+            api_key_env: "GROQ_API_KEY",
+            default_model: "llama-3.3-70b-versatile",
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: false,
+            api_mode: ApiMode::ChatCompletions,
+        }
+    }
+
     pub fn generic(base_url: &str) -> Self {
         Self {
             id: ProviderId::new("generic"),

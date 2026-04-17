@@ -8,6 +8,7 @@ description = "Web UI server"
 h-core = { path = "../core" }
 h-api = { path = "../api" }
 h-query = { path = "../query" }
+h-tools = { path = "../tools" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

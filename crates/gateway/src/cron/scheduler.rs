@@ -208,28 +208,68 @@ async fn run_scheduler_loop(
 /// Execute a cron job and deliver the result to the target platform.
 ///
 /// This is called by the gateway when a `SchedulerEvent::JobDue` is received.
+/// The job prompt is sent to an LLM (via the auxiliary client) for processing,
+/// and the result is delivered to the configured platform.
 pub async fn execute_job(
     job: &CronJob,
     platform: &Arc<dyn PlatformAdapter>,
 ) -> Result<String> {
     tracing::info!(job_id = %job.id, "Executing cron job");
 
-    // In a full implementation, this would:
-    // 1. Create an AI agent with the job prompt
-    // 2. Run the query loop
-    // 3. Capture the response text
-    // 4. Deliver the result to the platform
+    // Build the user-facing prompt for the job
+    let system_prompt = "You are an automated cron job executor. \
+        Follow the instructions below and provide a concise, actionable response.";
+    let user_prompt = format!(
+        "Cron job '{}' scheduled task:\n\n{}",
+        job.id, job.prompt
+    );
 
-    // For now, we log and return the prompt as a placeholder
-    let result = format!("Cron job '{}' prompt: {}", job.id, job.prompt);
+    // Execute the job using the auxiliary LLM client
+    let result_text = match execute_job_with_llm(system_prompt, &user_prompt).await {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::warn!(job_id = %job.id, error = %e, "LLM execution failed, returning prompt as fallback");
+            // Fallback: return the prompt itself if LLM is not available
+            format!("Cron job '{}' (LLM unavailable, showing prompt):\n\n{}", job.id, job.prompt)
+        }
+    };
 
     // Deliver result to platform
     platform
-        .send_message(&job.delivery.chat_id, &result)
+        .send_message(&job.delivery.chat_id, &result_text)
         .await?;
 
     tracing::info!(job_id = %job.id, "Cron job completed");
-    Ok(result)
+    Ok(result_text)
+}
+
+/// Send a prompt to the LLM via the auxiliary client.
+async fn execute_job_with_llm(_system_prompt: &str, user_prompt: &str) -> Result<String> {
+    use h_api::auxiliary::{AuxiliaryClient, AuxiliaryConfig, AuxiliaryTask};
+
+    let config = AuxiliaryConfig {
+        model: String::new(), // Use task-specific default
+        provider: "anthropic".to_string(),
+        ..Default::default()
+    };
+    let client = AuxiliaryClient::with_config(config);
+
+    match client.execute(AuxiliaryTask::TextProcessing, user_prompt).await {
+        Ok(result) => Ok(result.text),
+        Err(e) => {
+            // Try OpenAI fallback
+            let config2 = AuxiliaryConfig {
+                model: String::new(),
+                provider: "openai".to_string(),
+                ..Default::default()
+            };
+            let client2 = AuxiliaryClient::with_config(config2);
+            match client2.execute(AuxiliaryTask::TextProcessing, user_prompt).await {
+                Ok(result) => Ok(result.text),
+                Err(e2) => anyhow::bail!("Anthropic: {e}; OpenAI: {e2}"),
+            }
+        }
+    }
 }
 
 /// Parse a natural language schedule and create a cron job.

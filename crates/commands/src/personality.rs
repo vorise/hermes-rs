@@ -3,7 +3,7 @@ use async_trait::async_trait;
 
 use crate::{CommandContext, CommandResult, ConfigChange, SlashCommand};
 
-/// /personality — Set the agent's personality.
+/// /personality — Set or view the agent's personality.
 pub struct PersonalityCommand;
 
 #[async_trait]
@@ -13,7 +13,7 @@ impl SlashCommand for PersonalityCommand {
     }
 
     fn description(&self) -> &str {
-        "Set the agent's personality"
+        "Set or view the agent's personality"
     }
 
     fn category(&self) -> &str {
@@ -28,14 +28,84 @@ impl SlashCommand for PersonalityCommand {
                 .personality
                 .as_deref()
                 .unwrap_or("default");
+
+            // Also show SOUL.md status
+            let hermes_home = h_core::home::hermes_home();
+            let soul_path = hermes_home.join("SOUL.md");
+            let soul_status = if soul_path.exists() {
+                if let Ok(soul) = h_core::soul::load_soul_or_default(None) {
+                    format!(
+                        " | SOUL.md loaded ({}, {} bytes)",
+                        if soul.is_default { "default" } else { "custom" },
+                        soul.content.len()
+                    )
+                } else {
+                    String::new()
+                }
+            } else {
+                " | SOUL.md not found".to_string()
+            };
+
             return Ok(CommandResult::Message(format!(
-                "Current personality: {current}"
+                "Current personality: {current}{soul_status}"
             )));
         }
 
-        Ok(CommandResult::ConfigChange(ConfigChange::Personality(
-            args.to_string(),
-        )))
+        // Handle subcommands
+        let parts: Vec<&str> = args.splitn(2, ' ').collect();
+        match parts[0] {
+            "set" => {
+                let name = parts.get(1).map(|s| s.trim()).unwrap_or("");
+                if name.is_empty() {
+                    return Ok(CommandResult::Message(
+                        "Usage: /personality set <name>".to_string(),
+                    ));
+                }
+                Ok(CommandResult::ConfigChange(ConfigChange::Personality(
+                    name.to_string(),
+                )))
+            }
+            "show" => {
+                let hermes_home = h_core::home::hermes_home();
+                let soul_path = hermes_home.join("SOUL.md");
+                if soul_path.exists() {
+                    match h_core::soul::load_soul_or_default(None) {
+                        Ok(soul) => {
+                            let preview = if soul.content.len() > 500 {
+                                format!("{}...", &soul.content[..500])
+                            } else {
+                                soul.content.clone()
+                            };
+                            Ok(CommandResult::Message(format!(
+                                "SOUL.md ({}) ({} bytes):\n\n{preview}",
+                                soul_path.display(),
+                                soul.content.len()
+                            )))
+                        }
+                        Err(e) => Ok(CommandResult::Message(format!("Error loading SOUL.md: {e}"))),
+                    }
+                } else {
+                    Ok(CommandResult::Message(
+                        "SOUL.md not found. Create one with /personality init.".to_string(),
+                    ))
+                }
+            }
+            "init" => {
+                match h_core::soul::create_default_soul() {
+                    Ok(path) => Ok(CommandResult::Message(format!(
+                        "Created default SOUL.md at {}",
+                        path.display()
+                    ))),
+                    Err(e) => Ok(CommandResult::Message(format!("Failed to create SOUL.md: {e}"))),
+                }
+            }
+            other => {
+                // Treat as shorthand for "set <name>"
+                Ok(CommandResult::ConfigChange(ConfigChange::Personality(
+                    other.to_string(),
+                )))
+            }
+        }
     }
 }
 
@@ -74,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_personality_set() {
         let result = PersonalityCommand
-            .execute("kawaii", &make_ctx())
+            .execute("set kawaii", &make_ctx())
             .await
             .unwrap();
         match result {
@@ -82,6 +152,35 @@ mod tests {
                 assert_eq!(name, "kawaii");
             }
             _ => panic!("Expected ConfigChange::Personality"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_personality_set_shorthand() {
+        let result = PersonalityCommand
+            .execute("friendly", &make_ctx())
+            .await
+            .unwrap();
+        match result {
+            CommandResult::ConfigChange(ConfigChange::Personality(name)) => {
+                assert_eq!(name, "friendly");
+            }
+            _ => panic!("Expected ConfigChange::Personality"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_personality_show_soul() {
+        let result = PersonalityCommand
+            .execute("show", &make_ctx())
+            .await
+            .unwrap();
+        match result {
+            CommandResult::Message(msg) => {
+                // Either shows SOUL.md not found or shows content if it exists
+                assert!(msg.contains("SOUL.md") || msg.contains("personality"));
+            }
+            _ => panic!("Expected Message"),
         }
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::{CommandContext, CommandResult, SlashCommand};
+use crate::{CommandContext, CommandResult, ConfigChange, SlashCommand};
 
 /// /tools — List, enable, or disable tools.
 pub struct ToolsCommand;
@@ -43,22 +43,22 @@ impl SlashCommand for ToolsCommand {
                 Ok(CommandResult::Message(lines.join("\n")))
             }
             Some(&"enable") => {
-                let tool_name = parts.get(1).map(|s| *s).unwrap_or("");
+                let tool_name = parts.get(1).map(|s| s.trim()).unwrap_or("");
                 if tool_name.is_empty() {
                     return Ok(CommandResult::Message(
                         "Usage: /tools enable <toolset>".to_string(),
                     ));
                 }
-                Ok(CommandResult::Message(format!("Toolset '{tool_name}' enabled.")))
+                Ok(CommandResult::ConfigChange(ConfigChange::EnableToolset(tool_name.to_string())))
             }
             Some(&"disable") => {
-                let tool_name = parts.get(1).map(|s| *s).unwrap_or("");
+                let tool_name = parts.get(1).map(|s| s.trim()).unwrap_or("");
                 if tool_name.is_empty() {
                     return Ok(CommandResult::Message(
                         "Usage: /tools disable <toolset>".to_string(),
                     ));
                 }
-                Ok(CommandResult::Message(format!("Toolset '{tool_name}' disabled.")))
+                Ok(CommandResult::ConfigChange(ConfigChange::DisableToolset(tool_name.to_string())))
             }
             Some(&"list") => {
                 self.execute("", ctx).await
@@ -122,8 +122,24 @@ mod tests {
             .await
             .unwrap();
         match result {
-            CommandResult::Message(msg) => assert!(msg.contains("enabled")),
-            _ => panic!("Expected Message"),
+            CommandResult::ConfigChange(ConfigChange::EnableToolset(name)) => {
+                assert_eq!(name, "terminal");
+            }
+            _ => panic!("Expected ConfigChange::EnableToolset"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tools_disable() {
+        let result = ToolsCommand
+            .execute("disable read_file", &make_ctx())
+            .await
+            .unwrap();
+        match result {
+            CommandResult::ConfigChange(ConfigChange::DisableToolset(name)) => {
+                assert_eq!(name, "read_file");
+            }
+            _ => panic!("Expected ConfigChange::DisableToolset"),
         }
     }
 }

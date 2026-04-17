@@ -484,6 +484,7 @@ mod tests {
             task_id: "test".to_string(),
             config: std::sync::Arc::new(h_core::HermesConfig::default()),
             working_dir: std::env::current_dir().unwrap_or_default(),
+            clarify: None,
         };
 
         let result = tool.execute(
@@ -505,6 +506,7 @@ mod tests {
             task_id: "test".to_string(),
             config: std::sync::Arc::new(h_core::HermesConfig::default()),
             working_dir: std::env::current_dir().unwrap_or_default(),
+            clarify: None,
         };
 
         let result = tool.execute(

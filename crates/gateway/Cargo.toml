@@ -9,6 +9,7 @@ h-core = { path = "../core" }
 h-api = { path = "../api" }
 h-tools = { path = "../tools" }
 h-query = { path = "../query" }
+h-mcp = { path = "../mcp" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -22,3 +23,5 @@ axum = { workspace = true }
 parking_lot = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
+url = { workspace = true }
+mime_guess = "2"

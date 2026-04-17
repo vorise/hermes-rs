@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use h_core::SessionDB;
+use h_core::{HermesConfig, SessionDB};
 use h_gateway::{GatewayConfig, GatewayRunner};
 use tracing_subscriber::EnvFilter;
 
@@ -40,10 +40,26 @@ async fn main() -> Result<()> {
     // Initialize session database
     let db = Arc::new(SessionDB::open(std::path::Path::new("hermes.db"))?);
 
+    // Load hermes config
+    let hermes_config_path = if let Some(path) = &args.config {
+        std::path::PathBuf::from(path)
+    } else {
+        h_core::home::config_path()
+    };
+    let hermes_config = h_core::config::load_config(&hermes_config_path)
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to load hermes config: {e}, using defaults");
+            HermesConfig::default()
+        });
+
     tracing::info!("Hermes Gateway starting");
 
-    let runner = GatewayRunner::new(config, db);
+    let mut runner = GatewayRunner::new(config, hermes_config, db, vec![]);
     runner.start().await?;
+
+    // Wait for shutdown signal
+    tokio::signal::ctrl_c().await?;
+    runner.stop().await?;
 
     Ok(())
 }

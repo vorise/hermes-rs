@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use parking_lot::Mutex;
 use std::collections::HashMap;
 
@@ -185,12 +183,13 @@ mod tests {
         let reference = storage.get_reference("call-1").unwrap();
         assert!(reference.contains("read_file"));
         assert!(reference.contains("turn 5"));
-        assert!(reference.contains("truncated"));
+        // Content is 200 chars, preview should be truncated to 100 + "..."
+        assert!(reference.contains("..."));
     }
 
     #[test]
     fn test_cleanup_removes_old() {
-        let storage = ToolResultStorage::new();
+        let mut storage = ToolResultStorage::new();
         storage.set_max_turns_retention(5);
 
         storage.store("old-1".to_string(), "tool".to_string(), "old".to_string(), false, 0);

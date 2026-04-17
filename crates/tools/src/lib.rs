@@ -18,7 +18,7 @@ pub use builtin_tools::{
     VisionTool, ImageGenTool, TtsTool, TranscriptionTool, DelegateTool,
     HomeAssistantTool, CronJobTool, MixtureOfAgentsTool,
     SkillsTool, SkillsHubTool,
-    BrowserTool, CodeExecutionTool,
+    BrowserTool, CodeExecutionTool, ClarifyTool, VoiceTool,
 };
 
 /// Create all built-in tools as a vector.
@@ -47,5 +47,7 @@ pub fn create_all_tools() -> Vec<std::sync::Arc<dyn Tool>> {
         std::sync::Arc::new(SkillsHubTool::new()),
         std::sync::Arc::new(BrowserTool::new()),
         std::sync::Arc::new(CodeExecutionTool::new()),
+        std::sync::Arc::new(ClarifyTool),
+        std::sync::Arc::new(VoiceTool::new()),
     ]
 }

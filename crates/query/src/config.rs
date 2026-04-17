@@ -3,6 +3,7 @@ use h_core::{Message, ModelRef, ToolDefinition};
 use crate::budget::IterationBudget;
 
 /// Configuration for a single query loop execution.
+#[derive(Clone)]
 pub struct QueryConfig {
     pub model: ModelRef,
     pub api_mode: h_api::provider::ApiMode,

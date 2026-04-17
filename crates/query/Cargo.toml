@@ -8,6 +8,7 @@ description = "Agentic query loop, context compression"
 h-core = { path = "../core" }
 h-api = { path = "../api" }
 h-tools = { path = "../tools" }
+h-plugins = { path = "../plugins" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

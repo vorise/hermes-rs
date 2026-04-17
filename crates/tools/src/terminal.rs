@@ -196,6 +196,7 @@ mod tests {
             task_id: "test".to_string(),
             config: std::sync::Arc::new(h_core::HermesConfig::default()),
             working_dir: std::env::temp_dir(),
+            clarify: None,
         }
     }
 

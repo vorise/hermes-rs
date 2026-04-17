@@ -6,6 +6,7 @@ mod error;
 mod protocol;
 pub mod tool_wrapper;
 mod transport;
+mod state;
 
 pub use client::McpClient;
 pub use config::{McpServerConfig, McpServerEntry, McpConfig};
@@ -15,3 +16,12 @@ pub use protocol::{
 };
 pub use tool_wrapper::{McpToolWrapper, McpToolRegistry};
 pub use transport::{McpTransport, StdioTransport, SseTransport};
+pub use state::McpState;
+
+pub mod oauth;
+pub use oauth::{
+    McpOAuthConfig, McpOAuthManager, OAuthMetadata, OAuthState, OAuthToken,
+};
+
+pub mod serve;
+pub use serve::McpServe;

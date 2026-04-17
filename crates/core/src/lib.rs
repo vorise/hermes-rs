@@ -1,19 +1,35 @@
 pub mod checkpoint;
 pub mod config;
+pub mod context_engine;
+pub mod context_refs;
+pub mod context_references;
+pub mod error_classifier;
 pub mod home;
+pub mod interrupt;
 pub mod logging;
 pub mod memory;
+pub mod model_metadata;
+pub mod nudge;
 pub mod pricing;
 pub mod sanitization;
 pub mod session;
 pub mod session_db;
 pub mod skills;
+pub mod skills_guard;
+pub mod skills_hub;
+pub mod soul;
+pub mod stream_consumer;
+pub mod subdirectory_hints;
 pub mod title;
 pub mod tool_result_storage;
 pub mod toolset;
+pub mod trajectory;
 
 mod types;
 
 pub use types::*;
 pub use config::HermesConfig;
+pub use interrupt::{Interrupt, InterruptManager};
+pub use nudge::NudgeSystem;
 pub use session_db::SessionDB;
+pub use stream_consumer::{StreamConsumer, NoOpConsumer};

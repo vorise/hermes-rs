@@ -208,7 +208,15 @@ pub async fn create_environment(
             };
             Ok(Arc::new(DaytonaEnv::new(daytona_config)))
         }
-        EnvType::Singularity => Ok(Arc::new(SingularityEnv::default())),
+        EnvType::Singularity => {
+            let singularity = config.terminal.as_ref().and_then(|t| t.singularity.as_ref());
+            if let Some(s) = singularity {
+                let image = PathBuf::from(&s.image);
+                Ok(Arc::new(SingularityEnv::new(&image, s.gpu)))
+            } else {
+                Ok(Arc::new(SingularityEnv::default()))
+            }
+        }
     }
 }
 

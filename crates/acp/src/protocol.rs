@@ -307,6 +307,17 @@ pub struct TerminalExecResult {
     pub stderr: String,
 }
 
+/// TerminalRead response — returns the current terminal buffer/output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalReadResult {
+    /// Current terminal output buffer.
+    pub output: String,
+    /// Whether the terminal has active processes running.
+    pub has_active_process: bool,
+    /// Last exit code from the terminal (if any).
+    pub last_exit_code: Option<i32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,6 +4,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+// Re-export StreamConsumer from h-core so the gateway uses the same trait
+pub use h_core::StreamConsumer;
+
+use std::path::PathBuf;
+
 /// Message formatting style for a platform.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -32,31 +37,6 @@ pub struct IncomingMessage {
     pub message_id: Option<String>,
     /// Attachment file paths, if any.
     pub attachments: Vec<PathBuf>,
-}
-
-use std::path::PathBuf;
-
-/// Trait for consuming streamed LLM responses.
-///
-/// Implementations receive streaming deltas from the query loop and
-/// deliver them to the appropriate platform (e.g., by editing a message
-/// in Telegram or posting incremental updates in Discord).
-#[async_trait]
-pub trait StreamConsumer: Send + Sync {
-    /// Handle a text delta from the LLM stream.
-    async fn on_text_delta(&self, delta: &str) -> Result<()>;
-
-    /// Called when a tool execution starts.
-    async fn on_tool_start(&self, tool_name: &str, args_preview: &str) -> Result<()>;
-
-    /// Called when a tool execution completes.
-    async fn on_tool_complete(&self, tool_name: &str, result_preview: &str) -> Result<()>;
-
-    /// Called when an error occurs during tool execution.
-    async fn on_tool_error(&self, tool_name: &str, error: &str) -> Result<()>;
-
-    /// Flush any buffered content and finalize the response.
-    async fn flush(&self) -> Result<()>;
 }
 
 /// Abstract base trait for all messaging platform adapters.

@@ -38,6 +38,8 @@ impl ProviderRegistry {
             ProviderInfo::huggingface(),
             ProviderInfo::ollama(),
             ProviderInfo::mistral(),
+            ProviderInfo::gemini(),
+            ProviderInfo::groq(),
         ];
         for info in builtins {
             self.providers.insert(info.id.clone(), info);
@@ -75,12 +77,14 @@ mod tests {
         assert!(registry.get(&ProviderId::new("openai")).is_some());
         assert!(registry.get(&ProviderId::new("openrouter")).is_some());
         assert!(registry.get(&ProviderId::new("ollama")).is_some());
+        assert!(registry.get(&ProviderId::new("gemini")).is_some());
+        assert!(registry.get(&ProviderId::new("groq")).is_some());
     }
 
     #[test]
     fn test_provider_count() {
         let registry = ProviderRegistry::new();
-        assert_eq!(registry.list().len(), 11);
+        assert_eq!(registry.list().len(), 13);
     }
 
     #[test]

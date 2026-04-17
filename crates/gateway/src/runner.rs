@@ -1,12 +1,17 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
+use tokio::task::JoinHandle;
 
 use crate::base::{IncomingMessage, PlatformAdapter, StreamConsumer};
 use crate::config::GatewayConfig;
+use crate::cron::{CronScheduler, SchedulerEvent};
+use crate::dispatch::dispatch_message;
 use crate::session::GatewaySessionStore;
-use h_core::SessionDB;
+use h_core::{HermesConfig, SessionDB};
+use h_mcp::McpState;
+use h_tools::Tool;
 
 /// Status of the gateway runner.
 #[derive(Debug, Clone)]
@@ -40,22 +45,53 @@ impl std::fmt::Display for GatewayStatus {
 pub struct GatewayRunner {
     #[allow(dead_code)]
     config: GatewayConfig,
+    hermes_config: HermesConfig,
     session_store: GatewaySessionStore,
     platforms: Vec<Arc<dyn PlatformAdapter>>,
     status: std::sync::Mutex<GatewayStatus>,
     shutdown: Arc<Notify>,
+    all_tools: Vec<Arc<dyn Tool>>,
+    mcp_state: Option<Arc<McpState>>,
+    cron_scheduler: CronScheduler,
+    cron_event_handle: Option<JoinHandle<()>>,
 }
 
 impl GatewayRunner {
     /// Create a new GatewayRunner.
-    pub fn new(config: GatewayConfig, db: Arc<SessionDB>) -> Self {
+    pub fn new(config: GatewayConfig, hermes_config: HermesConfig, db: Arc<SessionDB>, all_tools: Vec<Arc<dyn Tool>>) -> Self {
         Self {
             config,
+            hermes_config,
             session_store: GatewaySessionStore::new(db),
             platforms: Vec::new(),
             status: std::sync::Mutex::new(GatewayStatus::Idle),
             shutdown: Arc::new(Notify::new()),
+            all_tools,
+            mcp_state: None,
+            cron_scheduler: CronScheduler::new(),
+            cron_event_handle: None,
         }
+    }
+
+    /// Create a new GatewayRunner with MCP state support.
+    pub fn new_with_mcp(config: GatewayConfig, hermes_config: HermesConfig, db: Arc<SessionDB>, all_tools: Vec<Arc<dyn Tool>>, mcp_state: Arc<McpState>) -> Self {
+        Self {
+            config,
+            hermes_config,
+            session_store: GatewaySessionStore::new(db),
+            platforms: Vec::new(),
+            status: std::sync::Mutex::new(GatewayStatus::Idle),
+            shutdown: Arc::new(Notify::new()),
+            all_tools,
+            mcp_state: Some(mcp_state),
+            cron_scheduler: CronScheduler::new(),
+            cron_event_handle: None,
+        }
+    }
+
+    /// Get the MCP state, if configured.
+    pub fn mcp_state(&self) -> Option<&Arc<McpState>> {
+        self.mcp_state.as_ref()
     }
 
     /// Get the session store.
@@ -73,8 +109,8 @@ impl GatewayRunner {
         self.platforms.push(adapter);
     }
 
-    /// Start all enabled platform adapters.
-    pub async fn start(&self) -> Result<()> {
+    /// Start all enabled platform adapters and the cron scheduler.
+    pub async fn start(&mut self) -> Result<()> {
         tracing::info!("Gateway runner starting");
         let mut connected = 0;
 
@@ -90,6 +126,9 @@ impl GatewayRunner {
             }
         }
 
+        // Start cron scheduler with event handling
+        self.start_cron_scheduler();
+
         *self.status.lock().unwrap() = GatewayStatus::Running {
             platforms_connected: connected,
         };
@@ -98,10 +137,57 @@ impl GatewayRunner {
         Ok(())
     }
 
-    /// Stop all platform adapters gracefully.
-    pub async fn stop(&self) -> Result<()> {
+    /// Start the cron scheduler and spawn an event handler task.
+    fn start_cron_scheduler(&mut self) {
+        if self.cron_scheduler.is_empty() {
+            return;
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<SchedulerEvent>();
+        self.cron_scheduler.start(tx);
+
+        // Spawn event handler that processes job-due events
+        let platforms = self.platforms.clone();
+        let handle = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    SchedulerEvent::JobDue { job, scheduled_at: _ } => {
+                        tracing::info!(job_id = %job.id, "Cron job due");
+                        // Find the target platform and execute the job
+                        for platform in &platforms {
+                            if platform.name() == job.delivery.platform {
+                                match crate::cron::execute_job(&job, platform).await {
+                                    Ok(result) => {
+                                        tracing::info!(job_id = %job.id, "Cron job completed: {}", result.chars().take(100).collect::<String>());
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(job_id = %job.id, error = %e, "Cron job execution failed");
+                                        let _ = platform.send_message(
+                                            &job.delivery.chat_id,
+                                            &format!("Cron job '{}' failed: {e}", job.id),
+                                        ).await;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        self.cron_event_handle = Some(handle);
+    }
+
+    /// Stop all platform adapters and the cron scheduler gracefully.
+    pub async fn stop(&mut self) -> Result<()> {
         *self.status.lock().unwrap() = GatewayStatus::Stopping;
         self.shutdown.notify_waiters();
+
+        // Stop cron scheduler
+        self.cron_scheduler.stop();
+        if let Some(handle) = self.cron_event_handle.take() {
+            handle.abort();
+        }
 
         for platform in &self.platforms {
             if let Err(e) = platform.disconnect().await {
@@ -127,7 +213,7 @@ impl GatewayRunner {
     /// Handle an incoming message from a platform adapter.
     ///
     /// This is called by platform adapters when a new message arrives.
-    /// It creates/gets a session and dispatches the message for processing.
+    /// It creates/gets a session and dispatches the message to the query loop.
     pub async fn handle_message(
         &self,
         adapter: &dyn PlatformAdapter,
@@ -140,12 +226,6 @@ impl GatewayRunner {
             "Received message"
         );
 
-        // Get or create session for this platform-user pair
-        let session = self
-            .session_store
-            .get_or_create(adapter.name(), &msg.user_id, &msg.chat_id)
-            .await?;
-
         // Check if session is already active (prevents concurrent processing)
         if self.session_store.is_active(adapter.name(), &msg.user_id) {
             adapter.send_message(&msg.chat_id, "_Already processing your request, please wait._")
@@ -156,23 +236,24 @@ impl GatewayRunner {
         // Mark session as active
         self.session_store.set_active(adapter.name(), &msg.user_id, true);
 
-        // Create stream consumer for this chat
-        let _consumer = adapter.create_consumer(&msg.chat_id, msg.message_id);
-
         // Show typing indicator
         let _ = adapter.is_typing(&msg.chat_id).await;
 
-        // In a real implementation, this would dispatch to the query loop.
-        // For now, we acknowledge the message.
-        tracing::info!(
-            session_id = %session.session_id,
-            "Dispatching message to query loop"
-        );
+        // Dispatch to query loop
+        let result = dispatch_message(
+            &msg,
+            adapter,
+            &self.session_store,
+            &self.config,
+            &self.hermes_config,
+            &self.all_tools,
+            self.mcp_state.as_ref(),
+        ).await;
 
         // Mark session as inactive after processing
         self.session_store.set_active(adapter.name(), &msg.user_id, false);
 
-        Ok(())
+        result
     }
 
     /// Get the list of connected platform names.
@@ -183,6 +264,18 @@ impl GatewayRunner {
     /// Get the session store reference.
     pub fn db(&self) -> &Arc<SessionDB> {
         self.session_store.db()
+    }
+
+    // ── Cron scheduler methods ───────────────────────────────────────
+
+    /// Get a reference to the cron scheduler.
+    pub fn cron_scheduler(&self) -> &CronScheduler {
+        &self.cron_scheduler
+    }
+
+    /// Get a mutable reference to the cron scheduler.
+    pub fn cron_scheduler_mut(&mut self) -> &mut CronScheduler {
+        &mut self.cron_scheduler
     }
 }
 
@@ -301,7 +394,8 @@ mod tests {
     async fn test_gateway_runner_start_stop() {
         let db = Arc::new(SessionDB::new_in_memory().unwrap());
         let config = GatewayConfig::default();
-        let mut runner = GatewayRunner::new(config, db);
+        let hermes_config = HermesConfig::default();
+        let mut runner = GatewayRunner::new(config, hermes_config, db, vec![]);
 
         let sent = Arc::new(parking_lot::Mutex::new(Vec::new()));
         runner.register(Arc::new(MockPlatform {
@@ -324,7 +418,8 @@ mod tests {
     async fn test_buffering_consumer() {
         let db = Arc::new(SessionDB::new_in_memory().unwrap());
         let config = GatewayConfig::default();
-        let _runner = GatewayRunner::new(config, db);
+        let hermes_config = HermesConfig::default();
+        let _runner = GatewayRunner::new(config, hermes_config, db, vec![]);
         let sent = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let platform = Arc::new(MockPlatform {
             name: "mock".to_string(),

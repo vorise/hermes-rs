@@ -704,8 +704,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "h-api",
  "h-core",
  "h-query",
+ "h-tools",
  "parking_lot",
  "serde",
  "serde_json",
@@ -737,6 +739,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "h-api",
  "h-core",
  "h-mcp",
@@ -744,6 +747,7 @@ dependencies = [
  "h-tools",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tracing",
 ]
@@ -753,15 +757,18 @@ name = "h-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "dotenvy",
  "glob",
  "parking_lot",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
  "serde_yaml",
  "thiserror",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -790,8 +797,10 @@ dependencies = [
  "futures",
  "h-api",
  "h-core",
+ "h-mcp",
  "h-query",
  "h-tools",
+ "mime_guess",
  "parking_lot",
  "regex",
  "reqwest",
@@ -800,6 +809,7 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -819,6 +829,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -843,6 +854,7 @@ dependencies = [
  "futures-util",
  "h-api",
  "h-core",
+ "h-plugins",
  "h-tools",
  "parking_lot",
  "serde",
@@ -902,6 +914,7 @@ dependencies = [
  "h-api",
  "h-core",
  "h-query",
+ "h-tools",
  "http-body-util",
  "serde",
  "serde_json",
@@ -977,6 +990,7 @@ name = "hermes-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "clap_complete",
  "crossterm",
@@ -995,6 +1009,7 @@ dependencies = [
  "h-tui",
  "h-web",
  "ratatui",
+ "reqwest",
  "serde_json",
  "serde_yaml",
  "tokio",
@@ -1844,6 +1859,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
