@@ -507,20 +507,100 @@ Home Assistant integration for smart home control.
 
 ### Image Generation Tool
 
-**File:** `tools/image_generation_tool.py` (~27K lines)
-**Toolset:** `image_generation`
-**Handler:** `execute_image_tool()`
+**File:** `tools/image_generation_tool.py` (~694 lines)
+**Toolset:** `image_gen`
+**Tool name:** `image_generate`
+**Emoji:** `🎨`
 
 #### Purpose
 
-Generate images using DALL-E or FAL.
+Generate high-quality images from text prompts using FAL.ai's FLUX 2 Pro model with automatic 2x upscaling via Clarity Upscaler.
 
-#### Key Features
+#### Model & Upscaler
 
-- Multiple backends (DALL-E, FAL)
-- Style selection
-- Size configuration
-- Image URL return
+| Component | Model ID |
+|-----------|----------|
+| Generation | `fal-ai/flux-2-pro` |
+| Upscaling | `fal-ai/clarity-upscaler` (2x) |
+
+#### Credential Resolution
+
+1. Direct: `FAL_KEY` environment variable
+2. Managed: Nous managed FAL queue gateway (no direct key needed)
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `prompt` | string | required | Text prompt describing the desired image |
+| `aspect_ratio` | string | `landscape` | `"landscape"` (16:9 wide), `"square"` (1:1), `"portrait"` (16:9 tall) |
+
+Internal (fixed, not exposed to model):
+- `num_inference_steps`: 50
+- `guidance_scale`: 4.5
+- `num_images`: 1
+- `output_format`: png
+- Safety checker: disabled, tolerance 5
+
+#### Aspect Ratio Mapping
+
+| User-facing | Internal FLUX size |
+|-------------|-------------------|
+| `landscape` | `landscape_16_9` |
+| `square` | `square_hd` |
+| `portrait` | `portrait_16_9` |
+
+#### Execution Flow
+
+1. Validate prompt (non-empty string)
+2. Check credentials (`FAL_KEY` or managed gateway)
+3. Validate parameters via `_validate_parameters()`
+4. Submit FLUX 2 Pro request via `fal_client.submit()` (sync mode)
+5. **Auto-upscale**: Pass generated image URL to Clarity Upscaler with creativity 0.35, resemblance 0.6
+6. If upscaling fails, fall back to original image
+7. Return JSON: `{"success": bool, "image": "<url>"}`
+
+#### Upscaler Configuration
+
+| Setting | Value |
+|---------|-------|
+| Upscale factor | 2x |
+| Creativity | 0.35 |
+| Resemblance | 0.6 |
+| Guidance scale | 4 |
+| Inference steps | 18 |
+| Default prompt | `masterpiece, best quality, highres` |
+| Negative prompt | `(worst quality, low quality, normal quality:2)` |
+
+#### Managed Gateway
+
+- `_resolve_managed_fal_gateway()` checks for managed FAL queue when `FAL_KEY` is absent
+- `_ManagedFalSyncClient` wraps `fal_client.SyncClient` for managed queue hosts
+- Client is cached globally to avoid per-call httpx.Client leaks
+- IDempotency key (UUID) added to every request
+
+#### Response Format
+
+```json
+{
+  "success": true,
+  "image": "https://fal.ai/...png"
+}
+```
+
+On failure:
+```json
+{
+  "success": false,
+  "image": null,
+  "error": "Error message",
+  "error_type": "ValueError"
+}
+```
+
+#### Sync Mode Design
+
+Uses synchronous `fal_client` API (not async) to avoid event loop lifecycle issues in gateway thread-pool pattern. The async API caches a global `httpx.AsyncClient` via `@cached_property`, which breaks when `asyncio.run()` destroys the loop between calls.
 
 ---
 
