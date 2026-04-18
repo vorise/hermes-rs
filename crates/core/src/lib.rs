@@ -5,13 +5,16 @@ pub mod context_refs;
 pub mod context_references;
 pub mod error_classifier;
 pub mod home;
+pub mod holographic_memory;
 pub mod interrupt;
 pub mod logging;
 pub mod memory;
+pub mod memory_provider;
 pub mod model_metadata;
 pub mod model_router;
 pub mod nudge;
 pub mod pricing;
+pub mod redaction;
 pub mod sanitization;
 pub mod session;
 pub mod session_db;
@@ -22,9 +25,11 @@ pub mod soul;
 pub mod stream_consumer;
 pub mod subdirectory_hints;
 pub mod title;
+pub mod tool_gateway;
 pub mod tool_result_storage;
 pub mod toolset;
 pub mod trajectory;
+pub mod website_policy;
 
 mod types;
 

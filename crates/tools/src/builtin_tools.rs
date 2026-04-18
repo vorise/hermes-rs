@@ -2386,6 +2386,7 @@ struct BrowserSession {
 enum BrowserBackend {
     Browserbase { api_key: String, project_id: String },
     Local { port: u16 },
+    Camofox,
 }
 
 impl BrowserTool {
@@ -2410,6 +2411,10 @@ impl BrowserTool {
     }
 
     fn get_backend(&self) -> Result<BrowserBackend> {
+        // Prefer Camofox if configured
+        if crate::browser_camofox::CamofoxClient::is_enabled() {
+            return Ok(BrowserBackend::Camofox);
+        }
         // Prefer Browserbase if configured
         if let Ok(api_key) = std::env::var("BROWSERBASE_API_KEY") {
             if !api_key.is_empty() {
@@ -2536,6 +2541,23 @@ impl BrowserTool {
                     Err(e) => Ok(ToolResult::err(format!("Navigation failed: {e}"))),
                 }
             }
+            BrowserBackend::Camofox => {
+                let camofox = crate::browser_camofox::CamofoxClient::new();
+                match camofox.navigate(url).await {
+                    Ok(actual_url) => {
+                        let session = BrowserSession {
+                            session_id: "camofox".to_string(),
+                            task_id: ctx.task_id.clone(),
+                            backend: backend.clone(),
+                            current_url: actual_url,
+                            created_at: chrono::Local::now(),
+                        };
+                        self.sessions.lock().insert(key, session);
+                        Ok(ToolResult::ok(format!("Navigated to {url} (Camofox)")))
+                    }
+                    Err(e) => Ok(ToolResult::err(format!("Camofox navigation failed: {e}"))),
+                }
+            }
             BrowserBackend::Local { port } => {
                 // Use local Chromium via CDP (Chrome DevTools Protocol)
                 let cdp_url = format!("http://127.0.0.1:{port}");
@@ -2601,6 +2623,13 @@ impl BrowserTool {
                     Err(e) => Ok(ToolResult::err(format!("Click failed: {e}"))),
                 }
             }
+            BrowserBackend::Camofox => {
+                let camofox = crate::browser_camofox::CamofoxClient::new();
+                match camofox.click(selector).await {
+                    Ok(msg) => Ok(ToolResult::ok(msg)),
+                    Err(e) => Ok(ToolResult::err(format!("Camofox click failed: {e}"))),
+                }
+            }
             BrowserBackend::Local { port: _ } => {
                 Ok(ToolResult::err(
                     "Local browser click requires Playwright connection. \
@@ -2641,6 +2670,13 @@ impl BrowserTool {
                         Ok(ToolResult::err(format!("Type failed: {status}: {body}")))
                     }
                     Err(e) => Ok(ToolResult::err(format!("Type failed: {e}"))),
+                }
+            }
+            BrowserBackend::Camofox => {
+                let camofox = crate::browser_camofox::CamofoxClient::new();
+                match camofox.r#type(selector, text).await {
+                    Ok(msg) => Ok(ToolResult::ok(msg)),
+                    Err(e) => Ok(ToolResult::err(format!("Camofox type failed: {e}"))),
                 }
             }
             BrowserBackend::Local { .. } => {
@@ -2699,6 +2735,19 @@ impl BrowserTool {
                         Ok(ToolResult::err(format!("Screenshot failed: {status}: {body}")))
                     }
                     Err(e) => Ok(ToolResult::err(format!("Screenshot failed: {e}"))),
+                }
+            }
+            BrowserBackend::Camofox => {
+                let camofox = crate::browser_camofox::CamofoxClient::new();
+                match camofox.screenshot().await {
+                    Ok(data) => {
+                        if !data.is_empty() {
+                            Ok(ToolResult::ok(format!("Screenshot taken (Camofox)\nBase64: {data}")))
+                        } else {
+                            Ok(ToolResult::ok("Screenshot taken (Camofox)"))
+                        }
+                    }
+                    Err(e) => Ok(ToolResult::err(format!("Camofox screenshot failed: {e}"))),
                 }
             }
             BrowserBackend::Local { port: _ } => {
@@ -2760,8 +2809,28 @@ impl BrowserTool {
                     Err(e) => Ok(ToolResult::err(format!("Snapshot failed: {e}"))),
                 }
             }
+            BrowserBackend::Camofox => {
+                let camofox = crate::browser_camofox::CamofoxClient::new();
+                match camofox.snapshot().await {
+                    Ok(result) => {
+                        let content = if result.content.is_empty() {
+                            "(empty snapshot)".to_string()
+                        } else {
+                            result.content
+                        };
+                        let truncated_note = if result.truncated {
+                            "\n[Snapshot was truncated]"
+                        } else {
+                            ""
+                        };
+                        Ok(ToolResult::ok(format!(
+                            "Page snapshot (Camofox):\n\n{content}{truncated_note}"
+                        )))
+                    }
+                    Err(e) => Ok(ToolResult::err(format!("Camofox snapshot failed: {e}"))),
+                }
+            }
             BrowserBackend::Local { port } => {
-                // Fetch page content via CDP
                 let resp = self.client
                     .get(format!("http://127.0.0.1:{port}/json/list"))
                     .send()
@@ -2795,6 +2864,7 @@ impl BrowserTool {
                             .await;
                     }
                     BrowserBackend::Local { .. } => {}
+                    BrowserBackend::Camofox => {}
                 }
                 Ok(ToolResult::ok("Browser session closed.".to_string()))
             }

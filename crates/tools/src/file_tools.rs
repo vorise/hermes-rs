@@ -3,9 +3,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::io::AsyncWriteExt;
 
 use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::patch_parser::{self, OperationType, PatchOperation};
+use crate::fuzzy_match::{self, ReplaceResult};
 
 /// Maximum file size to read (1MB).
 const MAX_READ_SIZE: usize = 1024 * 1024;
@@ -149,7 +150,7 @@ impl Tool for WriteFileTool {
     }
 }
 
-/// Apply a patch (unified diff) to a file.
+/// Apply a V4A patch to files. Supports add, update, delete, and move operations.
 pub struct PatchTool;
 
 #[async_trait]
@@ -163,86 +164,262 @@ impl Tool for PatchTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a patch to a file using unified diff format. \
-        Use this for targeted edits rather than rewriting entire files."
+        "Apply a V4A patch to one or more files. Supports *** Add File, *** Update File, \
+        *** Delete File, and *** Move File operations. Use fuzzy matching for resilient \
+        find-and-replace when updating files."
     }
 
     fn schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to patch"
-                },
                 "patch": {
                     "type": "string",
-                    "description": "Unified diff patch to apply"
+                    "description": "V4A patch content. Format: *** Begin Patch\\n*** Update File: path\\n- old\\n+ new\\n*** End Patch"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional: single file path (for single-file patches). If omitted, file paths come from the patch content."
                 }
             },
-            "required": ["path", "patch"]
+            "required": ["patch"]
         })
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let path = args.get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required argument: path"))?;
-
         let patch_content = args.get("patch")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing required argument: patch"))?;
 
-        let resolved = resolve_path(path, &ctx.working_dir);
-
-        if !resolved.exists() {
-            return Ok(ToolResult::err(format!("File not found: {}", resolved.display())));
-        }
-
-        // Apply the patch using the system `patch` command
-        let mut child = match tokio::process::Command::new("patch")
-            .arg(&resolved)
-            .arg("-p0")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return Ok(ToolResult::err(format!(
-                    "Failed to run patch command: {e}. Install `patch` or use write_file instead."
-                )));
-            }
+        let ops = match patch_parser::parse_patch(patch_content) {
+            Ok(ops) => ops,
+            Err(e) => return Ok(ToolResult::err(format!("Failed to parse patch: {e}"))),
         };
 
-        // Write patch content to stdin
-        if let Some(mut stdin) = child.stdin.take() {
-            if let Err(e) = stdin.write_all(patch_content.as_bytes()).await {
-                return Ok(ToolResult::err(format!("Failed to write patch: {e}")));
+        if ops.is_empty() {
+            return Ok(ToolResult::err("Patch contains no operations."));
+        }
+
+        let working_dir = &ctx.working_dir;
+        let mut results = Vec::new();
+
+        for op in &ops {
+            match apply_operation(op, working_dir) {
+                Ok(msg) => results.push(msg),
+                Err(e) => return Ok(ToolResult::err(format!("Failed: {e}"))),
             }
         }
 
-        match child.wait_with_output().await {
-            Ok(output) if output.status.success() => {
-                Ok(ToolResult::ok(format!(
-                    "Patch applied successfully to {}",
-                    resolved.display()
-                )))
+        Ok(ToolResult::ok(results.join("\n")))
+    }
+}
+
+fn apply_operation(op: &PatchOperation, working_dir: &Path) -> Result<String, String> {
+    let resolved = if op.file_path.starts_with('/') {
+        std::path::PathBuf::from(&op.file_path)
+    } else {
+        working_dir.join(&op.file_path)
+    };
+
+    match op.operation {
+        OperationType::Add => apply_add(op, &resolved),
+        OperationType::Update => apply_update(op, &resolved),
+        OperationType::Delete => apply_delete(&resolved),
+        OperationType::Move => apply_move(op, &resolved),
+    }
+}
+
+fn apply_add(op: &PatchOperation, path: &Path) -> Result<String, String> {
+    if path.exists() {
+        return Err(format!("File already exists: {}", path.display()));
+    }
+
+    // Extract content from + lines in hunks
+    let content: String = op.hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|hl| hl.prefix == '+')
+        .map(|hl| hl.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {e}"))?;
+    }
+
+    std::fs::write(path, &content)
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(format!("Created {} ({} bytes)", path.display(), content.len()))
+}
+
+fn apply_update(op: &PatchOperation, path: &Path) -> Result<String, String> {
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+
+    let mut content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    let mut total_changes = 0;
+
+    for (hunk_idx, hunk) in op.hunks.iter().enumerate() {
+        let (pattern, replacement) = build_hunk_pattern(hunk);
+
+        if pattern.is_empty() {
+            // Addition-only hunk (only + lines) — use context hint
+            if let Some(ref hint) = hunk.context_hint {
+                let lines: Vec<&str> = content.lines().collect();
+                let mut insert_pos = lines.len();
+                for (i, line) in lines.iter().enumerate() {
+                    if line.contains(hint.as_str()) {
+                        insert_pos = i + 1;
+                        break;
+                    }
+                }
+
+                let mut new_content = String::new();
+                for (i, line) in lines.iter().enumerate() {
+                    new_content.push_str(line);
+                    new_content.push('\n');
+                    if i == insert_pos - 1 {
+                        new_content.push_str(&replacement);
+                        new_content.push('\n');
+                    }
+                }
+                content = new_content;
+                total_changes += 1;
             }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Ok(ToolResult::err(format!(
-                    "Patch failed for {}: {}",
-                    resolved.display(),
-                    stderr
-                )))
+            continue;
+        }
+
+        let replace_result = fuzzy_match::fuzzy_find_and_replace(
+            &content, &pattern, &replacement, false,
+        );
+
+        match replace_result {
+            ReplaceResult::Replaced { content: new_content, count } => {
+                content = new_content;
+                total_changes += count;
             }
-            Err(e) => Ok(ToolResult::err(format!(
-                "Failed to run patch command: {e}. Install `patch` or use write_file instead."
-            ))),
+            ReplaceResult::NotFound => {
+                return Err(format!(
+                    "Hunk {} not found in {} (pattern not matched)",
+                    hunk_idx + 1, path.display()
+                ));
+            }
+            ReplaceResult::MultipleOccurrences { count } => {
+                return Err(format!(
+                    "Hunk {} matches {} locations in {}. Provide more context.",
+                    hunk_idx + 1, count, path.display()
+                ));
+            }
         }
     }
+
+    std::fs::write(path, &content)
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(format!(
+        "Updated {} ({} changes in {} hunks)",
+        path.display(), total_changes, op.hunks.len()
+    ))
+}
+
+fn build_hunk_pattern(hunk: &patch_parser::Hunk) -> (String, String) {
+    let mut pattern = String::new();
+    let mut replacement = String::new();
+    for line in &hunk.lines {
+        match line.prefix {
+            ' ' => {
+                pattern.push_str(&line.content);
+                pattern.push('\n');
+                replacement.push_str(&line.content);
+                replacement.push('\n');
+            }
+            '-' => {
+                pattern.push_str(&line.content);
+                pattern.push('\n');
+            }
+            '+' => {
+                replacement.push_str(&line.content);
+                replacement.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    // If no actual changes (only context), return empty
+    let has_removals_or_adds = hunk.lines.iter().any(|l| l.prefix == '-' || l.prefix == '+');
+    if !has_removals_or_adds {
+        return (String::new(), String::new());
+    }
+
+    // For fuzzy matching: pattern = lines to find, replacement = what to replace with
+    // The pattern should include the lines to remove + surrounding context
+    let pattern_text: String = hunk.lines
+        .iter()
+        .filter(|l| l.prefix != '+')
+        .map(|l| l.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let replacement_text: String = hunk.lines
+        .iter()
+        .filter(|l| l.prefix != '-')
+        .map(|l| l.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if pattern_text.trim().is_empty() {
+        // Addition-only: no pattern, use context hint approach
+        return (String::new(), replacement_text);
+    }
+
+    (pattern_text, replacement_text)
+}
+
+fn apply_delete(path: &Path) -> Result<String, String> {
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+
+    std::fs::remove_file(path)
+        .map_err(|e| format!("Failed to delete file: {e}"))?;
+
+    Ok(format!("Deleted {}", path.display()))
+}
+
+fn apply_move(op: &PatchOperation, src: &Path) -> Result<String, String> {
+    if !src.exists() {
+        return Err(format!("Source file not found: {}", src.display()));
+    }
+
+    let dst = match &op.new_path {
+        Some(p) => {
+            if p.starts_with('/') {
+                std::path::PathBuf::from(p)
+            } else {
+                src.parent().unwrap_or(std::path::Path::new(".")).join(p)
+            }
+        }
+        None => return Err("MOVE operation has no destination".to_string()),
+    };
+
+    if dst.exists() {
+        return Err(format!("Destination already exists: {}", dst.display()));
+    }
+
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {e}"))?;
+    }
+
+    std::fs::rename(src, &dst)
+        .map_err(|e| format!("Failed to move file: {e}"))?;
+
+    Ok(format!("Moved {} -> {}", src.display(), dst.display()))
 }
 
 /// Search files using glob patterns.

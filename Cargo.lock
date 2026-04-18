@@ -458,6 +458,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dissimilar"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeda16ab4059c5fd2a83f2b9c9e9c981327b18aa8e3b313f7e6563799d4f093e"
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -762,6 +768,7 @@ dependencies = [
  "dotenvy",
  "glob",
  "parking_lot",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",
@@ -837,6 +844,7 @@ name = "h-plugins"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "h-core",
  "serde",
  "serde_json",
@@ -871,8 +879,10 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "dissimilar",
  "glob",
  "h-core",
+ "h-envs",
  "inventory",
  "nix",
  "parking_lot",

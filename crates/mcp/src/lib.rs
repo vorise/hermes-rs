@@ -25,3 +25,6 @@ pub use oauth::{
 
 pub mod serve;
 pub use serve::McpServe;
+
+pub mod osv_check;
+pub use osv_check::{check_package_for_malware, MalwareCheckResult, PackageRef, Ecosystem};
