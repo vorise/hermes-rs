@@ -9,6 +9,7 @@ pub mod interrupt;
 pub mod logging;
 pub mod memory;
 pub mod model_metadata;
+pub mod model_router;
 pub mod nudge;
 pub mod pricing;
 pub mod sanitization;
